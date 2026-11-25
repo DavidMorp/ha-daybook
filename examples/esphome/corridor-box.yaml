@@ -1,0 +1,152 @@
+# Daybook corridor box: one button per state, plus coffee.
+# Short press logs, long press (1 s) undoes the last press from this box.
+#
+# In Home Assistant: Settings > Devices & services > ESPHome > this device >
+# Configure, then turn on "Allow the device to perform Home Assistant actions".
+#
+# Wiring: each button between its GPIO and GND (internal pull-up), each LED
+# with a 220-330 ohm resistor from its GPIO to GND. Pins are for an ESP32
+# DevKit; change them to suit your board.
+
+substitutions:
+  name: daybook-box
+  friendly_name: Daybook box
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+
+logger:
+api:
+  encryption:
+    key: !secret daybook_box_api_key
+ota:
+  - platform: esphome
+    password: !secret ota_password
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+output:
+  - { platform: gpio, id: led_productive, pin: GPIO16 }
+  - { platform: gpio, id: led_creative, pin: GPIO17 }
+  - { platform: gpio, id: led_overstimulated, pin: GPIO18 }
+  - { platform: gpio, id: led_tired, pin: GPIO19 }
+  - { platform: gpio, id: led_lazy, pin: GPIO21 }
+  - { platform: gpio, id: led_coffee, pin: GPIO22 }
+
+script:
+  # Blink the pressed button's LED to confirm, without waiting for HA.
+  - id: confirm
+    mode: queued
+    parameters:
+      led: int
+    then:
+      - lambda: |-
+          std::vector<esphome::output::BinaryOutput*> leds = {
+            id(led_productive), id(led_creative), id(led_overstimulated),
+            id(led_tired), id(led_lazy), id(led_coffee)};
+          leds[led]->turn_on();
+      - delay: 600ms
+      - lambda: |-
+          std::vector<esphome::output::BinaryOutput*> leds = {
+            id(led_productive), id(led_creative), id(led_overstimulated),
+            id(led_tired), id(led_lazy), id(led_coffee)};
+          leds[led]->turn_off();
+  - id: undo
+    then:
+      - homeassistant.action:
+          action: daybook.undo_last
+          data:
+            source: corridor_box
+      - repeat:
+          count: 3
+          then:
+            - output.turn_on: led_productive
+            - output.turn_on: led_lazy
+            - delay: 120ms
+            - output.turn_off: led_productive
+            - output.turn_off: led_lazy
+            - delay: 120ms
+
+.state_button: &state_button
+  platform: gpio
+  filters:
+    - delayed_on: 20ms
+
+binary_sensor:
+  - <<: *state_button
+    name: Productive
+    pin: { number: GPIO25, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: state, item: productive, source: corridor_box } }
+          - script.execute: { id: confirm, led: 0 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]
+  - <<: *state_button
+    name: Creative
+    pin: { number: GPIO26, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: state, item: creative, source: corridor_box } }
+          - script.execute: { id: confirm, led: 1 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]
+  - <<: *state_button
+    name: Overstimulated
+    pin: { number: GPIO27, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: state, item: overstimulated, source: corridor_box } }
+          - script.execute: { id: confirm, led: 2 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]
+  - <<: *state_button
+    name: Tired
+    pin: { number: GPIO32, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: state, item: tired, source: corridor_box } }
+          - script.execute: { id: confirm, led: 3 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]
+  - <<: *state_button
+    name: Lazy
+    pin: { number: GPIO33, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: state, item: lazy, source: corridor_box } }
+          - script.execute: { id: confirm, led: 4 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]
+  - <<: *state_button
+    name: Coffee
+    pin: { number: GPIO14, mode: INPUT_PULLUP, inverted: true }
+    on_click:
+      - min_length: 20ms
+        max_length: 800ms
+        then:
+          - homeassistant.action: { action: daybook.log, data: { kind: caffeine, item: coffee, source: corridor_box } }
+          - script.execute: { id: confirm, led: 5 }
+      - min_length: 1s
+        max_length: 5s
+        then: [script.execute: undo]

@@ -1,0 +1,101 @@
+log:
+  fields:
+    kind:
+      required: true
+      selector:
+        select:
+          translation_key: kind
+          options: [state, caffeine, med, sport, sleep, note]
+    item:
+      example: productive
+      selector:
+        text:
+    when:
+      selector:
+        datetime:
+    offset_minutes:
+      example: -30
+      selector:
+        number:
+          min: -1440
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    end:
+      selector:
+        datetime:
+    duration_minutes:
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    mg:
+      selector:
+        number:
+          min: 0
+          max: 1000
+          unit_of_measurement: mg
+          mode: box
+    dose:
+      selector:
+        number:
+          min: 0
+          max: 1000
+          mode: box
+    skipped:
+      selector:
+        boolean:
+    note:
+      selector:
+        text:
+          multiline: true
+    source:
+      example: corridor_box
+      selector:
+        text:
+update:
+  fields:
+    id:
+      required: true
+      selector:
+        text:
+    item:
+      selector:
+        text:
+    when:
+      selector:
+        datetime:
+    end:
+      selector:
+        datetime:
+    status:
+      selector:
+        select:
+          translation_key: status
+          options: [confirmed, draft, rejected]
+    note:
+      selector:
+        text:
+          multiline: true
+delete:
+  fields:
+    id:
+      required: true
+      selector:
+        text:
+undo_last:
+  fields:
+    source:
+      example: corridor_box
+      selector:
+        text:
+    within_minutes:
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
