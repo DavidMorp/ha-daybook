@@ -1,8 +1,10 @@
 # Daybook corridor box: one button per state, plus coffee.
 # Short press logs, long press (1 s) undoes the last press from this box.
 #
-# In Home Assistant: Settings > Devices & services > ESPHome > this device >
-# Configure, then turn on "Allow the device to perform Home Assistant actions".
+# The box asks Home Assistant to publish an MQTT message, which the Daybook
+# app picks up. In Home Assistant: Settings > Devices & services > ESPHome >
+# this device > Configure, then turn on "Allow the device to perform Home
+# Assistant actions".
 #
 # Wiring: each button between its GPIO and GND (internal pull-up), each LED
 # with a 220-330 ohm resistor from its GPIO to GND. Pins are for an ESP32
@@ -59,9 +61,10 @@ script:
   - id: undo
     then:
       - homeassistant.action:
-          action: daybook.undo_last
+          action: mqtt.publish
           data:
-            source: corridor_box
+            topic: daybook/undo
+            payload: '{"source": "corridor_box"}'
       - repeat:
           count: 3
           then:
@@ -85,7 +88,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: state, item: productive, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "state", "item": "productive", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 0 }
       - min_length: 1s
         max_length: 5s
@@ -97,7 +100,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: state, item: creative, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "state", "item": "creative", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 1 }
       - min_length: 1s
         max_length: 5s
@@ -109,7 +112,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: state, item: overstimulated, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "state", "item": "overstimulated", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 2 }
       - min_length: 1s
         max_length: 5s
@@ -121,7 +124,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: state, item: tired, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "state", "item": "tired", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 3 }
       - min_length: 1s
         max_length: 5s
@@ -133,7 +136,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: state, item: lazy, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "state", "item": "lazy", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 4 }
       - min_length: 1s
         max_length: 5s
@@ -145,7 +148,7 @@ binary_sensor:
       - min_length: 20ms
         max_length: 800ms
         then:
-          - homeassistant.action: { action: daybook.log, data: { kind: caffeine, item: coffee, source: corridor_box } }
+          - homeassistant.action: { action: mqtt.publish, data: { topic: daybook/log, payload: '{"kind": "intake", "item": "coffee", "source": "corridor_box"}' } }
           - script.execute: { id: confirm, led: 5 }
       - min_length: 1s
         max_length: 5s

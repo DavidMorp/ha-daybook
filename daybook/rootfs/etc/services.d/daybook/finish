@@ -1,0 +1,6 @@
+#!/usr/bin/env bashio
+# Stop the container if Daybook exits, so the Supervisor can restart it.
+if [[ "${1}" -ne 0 ]] && [[ "${1}" -ne 256 ]]; then
+  bashio::log.warning "Daybook stopped unexpectedly (exit code ${1})"
+  /run/s6/basedir/bin/halt
+fi

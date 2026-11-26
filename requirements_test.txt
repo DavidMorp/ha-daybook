@@ -1,2 +1,4 @@
-pytest-homeassistant-custom-component
-home-assistant-frontend
+-r daybook/requirements.txt
+pytest
+pytest-asyncio
+pytest-aiohttp

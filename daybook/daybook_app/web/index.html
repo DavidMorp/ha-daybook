@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Daybook</title>
+  <style>body { margin: 0; }</style>
+</head>
+<body>
+  <daybook-app></daybook-app>
+  <script type="module">
+    // Relative URLs only: inside Home Assistant this page is served under an ingress path.
+    import { Connection } from "./static/daybook.js";
+    const url = new URL("api/ws", location.href);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    document.querySelector("daybook-app").connection = new Connection(url.href);
+  </script>
+</body>
+</html>

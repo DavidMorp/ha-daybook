@@ -1,8 +1,0 @@
-{
-  "services": {
-    "log": {"service": "mdi:notebook-plus-outline"},
-    "update": {"service": "mdi:notebook-edit-outline"},
-    "delete": {"service": "mdi:notebook-remove-outline"},
-    "undo_last": {"service": "mdi:undo"}
-  }
-}

@@ -6,23 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  hassfest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
-
-  hacs:
-    # The HACS action only validates public repositories.
-    if: ${{ !github.event.repository.private }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: hacs/action@main
-        with:
-          category: integration
-          # Brand images and topics are only checked once the repo is public.
-          ignore: brands topics
-
   tests:
     runs-on: ubuntu-latest
     steps:
@@ -35,4 +18,48 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: for f in custom_components/daybook/frontend/*.js; do node --check "$f"; done
+      - run: for f in daybook/daybook_app/web/*.js; do node --check "$f"; done
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: frenck/action-addon-linter@v2
+        with:
+          path: "./daybook"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the app image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./daybook
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: daybook:test
+          build-args: |
+            BUILD_ARCH=amd64
+            BUILD_VERSION=ci
+      - name: Start it and check the panel answers
+        run: |
+          docker run -d --name daybook -e DAYBOOK_DEV=0 --entrypoint python3 -w /app daybook:test -c "
+          import asyncio, os
+          os.environ['DAYBOOK_DATA']='/tmp/d'
+          from daybook_app.core import Journal
+          from daybook_app.server import create_app
+          from aiohttp import web
+          async def main():
+              j = Journal('/tmp'); await j.start()
+              r = web.AppRunner(create_app(j)); await r.setup()
+              await web.TCPSite(r, '0.0.0.0', 8099).start(); await asyncio.Event().wait()
+          asyncio.run(main())"
+          for i in $(seq 1 20); do
+            if docker exec daybook python3 -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8099/').status)"; then exit 0; fi
+            sleep 1
+          done
+          docker logs daybook
+          exit 1

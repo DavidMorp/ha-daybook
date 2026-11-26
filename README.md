@@ -1,77 +1,73 @@
 # Daybook
 
-A private journal for Home Assistant. Log meds, caffeine, how you feel and sport with one tap, a physical button or an automation. Fix anything afterwards, and see how they relate over days and weeks.
+A private journal app for Home Assistant. Log what you take and how you feel with one tap, a physical button or an automation. Fix anything afterwards, and see how they relate over days and weeks.
 
 Daybook was built for tracking ADHD medication and caffeine, but it works for anything you take and anything you feel.
 
-- **Fast to log.** Tap a button in the panel, press a button entity from a dashboard or phone widget, or call `daybook.log` from an automation or an ESPHome device. Every log can be undone or moved 15 minutes back from the toast.
-- **Everything is editable.** Change the time, amount, dose or note of any entry, delete it, or restore it. Every change keeps the previous version.
-- **Skipped is data.** A med can be recorded as taken or skipped on purpose; a day with neither is "not recorded", never a guess.
-- **Your own states.** Instead of a 1–5 score you check in with states such as productive, creative, overstimulated, tired or lazy. Each is marked high or low energy.
-- **Curves of what's in your body.** Caffeine and common ADHD meds are modelled from published averages (time to peak, half-life, release type), so the timeline shows roughly what was active when.
-- **Compare days.** The week view puts days side by side, aligned by clock time, by med dose or by first coffee.
-- **Patterns without AI.** Counts and shares only: your typical week, how you feel after coffee with and without meds, by hours since your dose, on days you took a med compared with days you skipped it, energy through the day, and caffeine at bedtime against sleep. Nothing is shown until there's enough data.
+- **Fast to log.** Tap a button in the panel, press a button entity from a dashboard or phone widget, or publish an MQTT message from an automation or an ESPHome device. Every log can be undone or moved 15 minutes back.
+- **Everything is editable.** Change the time, amount or note of any entry, delete it, or restore it. Every change keeps the previous version.
+- **Records what happened, nothing more.** No schedules, reminders or "missed" doses.
+- **Your own states.** Instead of a 1–5 score you check in with states such as productive, creative, overstimulated, tired or lazy, each marked high or low energy.
+- **What you take, as substances.** Coffee, tea and meds are all things you take. Each is linked to a substance profile (caffeine, methylphenidate, lisdexamfetamine…), so the timeline shows roughly how much was in your body, and when it was effectively gone.
+- **Compare days.** The week view puts days side by side, lined up by time of day or by your first coffee or dose.
+- **Patterns without AI.** Counts and shares only: your typical week, how you felt depending on what you'd had (lines you define yourself), by hours since your first intake, days with compared with days without, energy through the day, and sleep after more or less caffeine than usual. Nothing is shown until there's enough data.
 - **Sport from zones.** Stays in an HA zone during your training times (or an HA Schedule) become suggested sport entries you confirm in the panel or from a phone notification.
-- **Private.** Everything stays in one SQLite file in your config folder. No cloud, no external requests, no analytics. The panel and its API are admin only.
+- **Private.** Everything stays in one SQLite file inside the app. No cloud, no external requests, no analytics. The panel is admin only.
 
 ## Install
 
-Daybook isn't in the default HACS / Marketplace list yet.
+Daybook needs Home Assistant OS or a Supervised install, and the **Mosquitto broker** app for buttons and logging from automations.
 
-1. In HACS (or the Marketplace), open the menu, choose **Custom repositories**, and add `https://github.com/DavidMorp/ha-daybook` as an **Integration**.
-2. Install **Daybook** and restart Home Assistant.
-3. Go to **Settings → Devices & services → Add integration → Daybook**.
-4. Open **Daybook** in the sidebar, go to **Settings**, and add your meds, drinks and sport places.
-
-Manual install: copy `custom_components/daybook` into your `config/custom_components` folder and restart.
+1. Go to **Settings → Apps → Install app**, open the menu (top right), choose **Repositories**, and add `https://github.com/DavidMorp/ha-daybook`.
+2. Find **Daybook** in the store, install it and start it.
+3. Open **Daybook** in the sidebar, go to **Settings**, and add what you take and your sport places.
 
 ## Logging from anywhere
 
-Daybook creates button entities such as `button.daybook_log_coffee`, `button.daybook_log_feeling_tired`, and `button.daybook_log_<med>_taken` / `_skipped`. Use them on dashboards, phone widgets, NFC tags or voice assistants.
+Daybook creates button entities through MQTT discovery, such as `button.daybook_took_coffee` and `button.daybook_state_tired`. Use them on dashboards, phone widgets, NFC tags or voice assistants.
 
-For more control, use the actions:
+For more control, publish to `daybook/log` from an automation or script:
 
 ```yaml
 # Coffee half an hour ago
-action: daybook.log
+action: mqtt.publish
 data:
-  kind: caffeine
-  item: coffee
-  offset_minutes: -30
-
-# A med skipped on purpose
-action: daybook.log
-data:
-  kind: med
-  item: elvanse
-  skipped: true
+  topic: daybook/log
+  payload: '{"kind": "intake", "item": "coffee", "offset_minutes": -30}'
 
 # A check-in from a physical button, so it can be undone with a long press
-action: daybook.log
+action: mqtt.publish
 data:
-  kind: state
-  item: overstimulated
-  source: corridor_box
+  topic: daybook/log
+  payload: '{"kind": "state", "item": "overstimulated", "source": "hallway_box"}'
+
+# Undo the newest entry from that button (within 10 minutes)
+action: mqtt.publish
+data:
+  topic: daybook/undo
+  payload: '{"source": "hallway_box"}'
 ```
 
-| Action | What it does |
+| Field | Meaning |
 |---|---|
-| `daybook.log` | Adds an entry. Returns its `id`. |
-| `daybook.update` | Changes an entry by `id`. |
-| `daybook.delete` | Deletes an entry (it can be restored in the panel). |
-| `daybook.undo_last` | Deletes the newest entry, optionally only from one `source` and within N minutes. |
+| `kind` | `state`, `intake`, `sport`, `sleep` or `note` |
+| `item` | Id of the state or thing you take, from Settings, or the sport activity |
+| `when` | ISO time, defaults to now; `offset_minutes` shifts it |
+| `end` or `duration_minutes` | For sport and sleep |
+| `amount` | Overrides the usual amount |
+| `note`, `source` | Free text; `source` is what `daybook/undo` matches |
 
-Each log fires a `daybook_logged` event with the entry's id, kind, item and source (no values), for example to flash a light.
+Each log fires a `daybook_logged` event in Home Assistant and publishes `daybook/logged`, with the entry's id, kind, item and source (no amounts or notes).
 
 ### A button box for the hallway
 
-[`examples/esphome/corridor-box.yaml`](examples/esphome/corridor-box.yaml) is an ESP32 with six buttons and LEDs: one per state, plus coffee. A short press logs and blinks its LED; a long press undoes the last press. Turn on **Allow the device to perform Home Assistant actions** for the device in the ESPHome integration.
+[`examples/esphome/corridor-box.yaml`](examples/esphome/corridor-box.yaml) is an ESP32 with six buttons and LEDs: one per state, plus coffee. A short press logs and blinks its LED; a long press undoes the last press.
 
 ## Substance profiles
 
 | Profile | Examples | Time to peak | Half-life |
 |---|---|---|---|
-| Caffeine | Coffee, tea | ~45 min (setting) | ~5 h (setting) |
+| Caffeine | Coffee, tea | ~45 min | ~5 h (1.5–9.5 h) |
 | Methylphenidate, immediate release | Ritalin, Medikinet | 1.5–2 h | 2–4 h |
 | Methylphenidate 50:50 extended release | Ritalin LA, Medikinet retard | two peaks | 2–4 h |
 | Methylphenidate OROS | Concerta | 6–10 h | ~3.5 h |
@@ -82,15 +78,15 @@ Each log fires a `daybook_logged` event with the entry's id, kind, item and sour
 | Atomoxetine | Strattera | 1–2 h | ~5 h (much longer in slow metabolisers) |
 | Custom | | you set it | you set it |
 
-Each med can override its half-life and time to peak. Sources are listed in the panel and in [`substances.py`](custom_components/daybook/substances.py).
+You can override the half-life and time to peak for each substance. Elimination never quite reaches zero, so Daybook treats a substance as gone once it's below 10% of one usual dose's peak (adjustable). Sources are listed in the app and in [`substances.py`](daybook/daybook_app/substances.py).
 
 > These curves estimate how much is in your blood from population averages. They don't show how strong the effect is, effects usually end before the curve does, and your body may differ a lot. Daybook isn't medical advice: talk to your prescriber before changing how you take anything.
 
 ## Privacy
 
-- Data lives only in `config/daybook.db`, which is included in Home Assistant backups. Encrypt your backups.
-- The panel and the WebSocket API require an admin user.
-- Entities expose only what they must: buttons (their state is the last press time) and an optional caffeine estimate sensor. Turn the sensor off in Settings if you don't want it in history or visible to voice assistants and other integrations.
+- Data lives only in the app's own folder (`/data/daybook.db` inside the app), which is included in Home Assistant backups. Encrypt your backups.
+- The panel opens through Home Assistant's ingress and is admin only; the app accepts connections only from the Supervisor's ingress proxy.
+- Home Assistant sees only button entities and the level sensors you choose (caffeine by default). Turn a sensor off in Settings if you don't want it in history or visible to voice assistants and other integrations.
 - Sport notifications use neutral text. On Android, the companion app's local push delivers them over your own connection instead of Google's servers.
 - Export everything as JSON or CSV from Settings at any time.
 
@@ -100,12 +96,7 @@ Each med can override its half-life and time to peak. Sources are listed in the 
 uv venv -p 3.14 .venv
 uv pip install -p .venv -r requirements_test.txt
 .venv/bin/python -m pytest
-```
-
-`dev/server.py` serves the panel with a fake Home Assistant and three weeks of sample data, using the real storage and statistics code:
-
-```bash
-.venv/bin/python dev/server.py 8765
+.venv/bin/python dev/run.py 8765   # the app with sample data and a fake Home Assistant
 ```
 
 ## Roadmap

@@ -1,0 +1,5 @@
+#!/usr/bin/with-contenv bashio
+# Start Daybook. Data lives in /data, which Home Assistant backs up.
+bashio::log.info "Starting Daybook"
+cd /app || exit 1
+exec python3 -m daybook_app
