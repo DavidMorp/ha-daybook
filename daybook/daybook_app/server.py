@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -21,6 +22,16 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).parent / "web"
+
+
+def web_fingerprint() -> str:
+    """A short hash of the panel's files. Scripts are served under it, so a
+    new version gets new URLs and browsers can never run stale copies."""
+    digest = hashlib.sha256()
+    for path in sorted(WEB_DIR.iterdir()):
+        if path.is_file():
+            digest.update(path.name.encode() + path.read_bytes())
+    return digest.hexdigest()[:12]
 ENTRY_FIELDS = ("item", "start", "end", "value", "status", "note")
 
 
@@ -110,7 +121,7 @@ class Api:
         }
 
 
-def create_app(journal: Journal, ha=None, mqtt=None, allowed_ips: set[str] | None = None) -> web.Application:
+def create_app(journal: Journal, ha=None, mqtt=None, allowed_ips: set[str] | None = None, cache_scripts: bool = True) -> web.Application:
     api = Api(journal, ha, mqtt)
 
     @web.middleware
@@ -120,8 +131,22 @@ def create_app(journal: Journal, ha=None, mqtt=None, allowed_ips: set[str] | Non
             raise web.HTTPForbidden()
         return await handler(request)
 
+    fingerprint = web_fingerprint()
+    index_html = (WEB_DIR / "index.html").read_text().replace("./static/", f"./static/{fingerprint}/")
+
     async def index(_request: web.Request) -> web.StreamResponse:
-        return web.FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+        return web.Response(text=index_html, content_type="text/html", headers={"Cache-Control": "no-cache"})
+
+    async def versioned(request: web.Request) -> web.StreamResponse:
+        if request.match_info["version"] != fingerprint:
+            raise web.HTTPNotFound()
+        path = (WEB_DIR / request.match_info["name"]).resolve()
+        if path.parent != WEB_DIR.resolve() or not path.is_file():
+            raise web.HTTPNotFound()
+        # The URL changes whenever the content does, so this copy can be kept.
+        # (The dev server edits files while running, so it doesn't let browsers keep them.)
+        cache = "public, max-age=31536000, immutable" if cache_scripts else "no-store"
+        return web.FileResponse(path, headers={"Cache-Control": cache})
 
     async def websocket(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30)
@@ -164,9 +189,17 @@ def create_app(journal: Journal, ha=None, mqtt=None, allowed_ips: set[str] | Non
                 unsub()
         return ws
 
+    async def no_stale_files(request: web.Request, response: web.StreamResponse) -> None:
+        # Old, unversioned script URLs (from before 0.4.0): make browsers
+        # check for a newer copy each time instead of running stale scripts.
+        if request.path.startswith("/static/") and "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "no-cache"
+
     app = web.Application(middlewares=[only_ingress])
+    app.on_response_prepare.append(no_stale_files)
     app.router.add_get("/", index)
     app.router.add_get("/api/ws", websocket)
+    app.router.add_get("/static/{version}/{name}", versioned)
     app.router.add_static("/static/", WEB_DIR, append_version=False)
     app["api"] = api
     return app

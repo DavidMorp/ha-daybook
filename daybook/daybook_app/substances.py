@@ -21,6 +21,11 @@ from typing import Any
 
 # Each component: fraction of the dose, lag before release starts (h), and
 # release duration (h, 0 = all at once).
+#
+# "effect" is the typical duration of action of one dose (onset to end), in
+# hours after taking it, from labels and clinical reviews. It's None where
+# there's no useful per-dose window: caffeine (alertness and sleep effects
+# differ too much), and non-stimulants, which work over weeks.
 PROFILES: dict[str, dict[str, Any]] = {
     "caffeine": {
         "name": "Caffeine",
@@ -30,6 +35,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "half_life_range_h": [1.5, 9.5],
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "Half-life is often 1.5–2× longer with oral contraceptives and shorter in smokers.",
+        "effect": None,
         "verified": True,
         "sources": [
             "https://frontiersin.org/articles/10.3389/fphar.2021.752826/full",
@@ -44,6 +50,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         "half_life_range_h": [2.0, 4.0],
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "Effect typically lasts about 3–4 h.",
+        "effect": {"onset_h": 0.5, "duration_h": 4, "range_h": [3, 5],
+                   "sources": ["https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/", "https://psychiatryonline.org/doi/10.1176/appi.focus.20200032"]},
         "verified": True,
         "sources": ["https://pubmed.ncbi.nlm.nih.gov/15015904/"],
     },
@@ -59,6 +67,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         ],
         "notes": "Half the dose is released at once and half later, giving two peaks. "
                  "The ~4 h gap is an estimate; Medikinet retard is taken with food.",
+        "effect": {"onset_h": 0.5, "duration_h": 8, "range_h": [6, 8],
+                   "sources": ["https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/", "https://psychiatryonline.org/doi/10.1176/appi.focus.20200032"]},
         "verified": False,
         "sources": [
             "https://www.novartis.com/us-en/sites/novartis_us/files/ritalin_la.pdf",
@@ -76,6 +86,8 @@ PROFILES: dict[str, dict[str, Any]] = {
             {"fraction": 0.78, "lag_h": 1.0, "release_h": 7.0},
         ],
         "notes": "22% is released at once, the rest steadily over the day. Peak at about 6–10 h.",
+        "effect": {"onset_h": 1, "duration_h": 12, "range_h": [10, 12.5],
+                   "sources": ["https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/", "https://psychiatryonline.org/doi/10.1176/appi.focus.20200032"]},
         "verified": True,
         "sources": [
             "https://www.thecarlatreport.com/ext/resources/factsheets/MFB7e/METHYLPHENIDATE-ER-(Concerta-Ritalin-SR-and-LA-others)-Fact-Sheet-[G].pdf",
@@ -91,6 +103,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "A prodrug converted to d-amphetamine; the curve is d-amphetamine. "
                  "Peak about 3.8 h fasted, 4.7 h with food. Effect up to ~14 h in adults.",
+        "effect": {"onset_h": 1.5, "duration_h": 13, "range_h": [10, 14],
+                   "sources": ["https://informahealthcare.com/doi/abs/10.3810/pgm.2011.03.2275", "https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/"]},
         "verified": True,
         "sources": [
             "https://pubmed.ncbi.nlm.nih.gov/27021968/",
@@ -105,6 +119,8 @@ PROFILES: dict[str, dict[str, Any]] = {
         "half_life_range_h": [7.0, 12.0],
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "The effect usually ends after about 4–6 h, long before it leaves the blood.",
+        "effect": {"onset_h": 0.75, "duration_h": 5, "range_h": [4, 6],
+                   "sources": ["https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/", "https://psychiatryonline.org/doi/10.1176/appi.focus.20200032"]},
         "verified": True,
         "sources": ["https://pmc.ncbi.nlm.nih.gov/articles/PMC5594082/table/T1"],
     },
@@ -119,6 +135,8 @@ PROFILES: dict[str, dict[str, Any]] = {
             {"fraction": 0.5, "lag_h": 4.0, "release_h": 0},
         ],
         "notes": "Two bead types; label time to peak is about 7 h (later with food).",
+        "effect": {"onset_h": 1, "duration_h": 12, "range_h": [10, 12],
+                   "sources": ["https://www.additudemag.com/short-acting-stimulants-long-acting-stimulants/", "https://psychiatryonline.org/doi/10.1176/appi.focus.20200032"]},
         "verified": True,
         "sources": [
             "https://webarchive.library.unt.edu/eot2008/20090118031732/http:/www.fda.gov/medwatch/safety/2006/Jul_PIs/AdderallXR_PI.pdf",
@@ -132,6 +150,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "half_life_range_h": [10.0, 30.0],
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "Not a stimulant. With daily doses it builds up to a steady level over several days.",
+        "effect": None,
         "verified": True,
         "sources": ["https://pmc.ncbi.nlm.nih.gov/articles/PMC2935643"],
     },
@@ -144,6 +163,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "Not a stimulant; its effect builds over weeks, not hours. Much longer "
                  "half-life in slow (CYP2D6 poor) metabolisers. Numbers not verified.",
+        "effect": None,
         "verified": False,
         "sources": [],
     },
@@ -155,6 +175,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "half_life_range_h": None,
         "components": [{"fraction": 1.0, "lag_h": 0, "release_h": 0}],
         "notes": "",
+        "effect": None,
         "verified": False,
         "sources": [],
     },

@@ -37,11 +37,16 @@ SUBSTANCE_SCHEMA = vol.Schema({
     vol.Optional("color", default="#d4537e"): _COLOR,
     vol.Optional("half_life_h", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.2, max=72))),
     vol.Optional("tmax_h", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.1, max=24))),
+    vol.Optional("onset_h", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=24))),
+    vol.Optional("effect_h", default=None): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.25, max=48))),
     vol.Optional("ha_sensor", default=False): bool,
     vol.Optional("items", default=[]): vol.All([ITEM_SCHEMA], vol.Length(max=24)),
 })
 CONDITION_SCHEMA = vol.Schema({
     vol.Required("substance"): _ID,
+    # "hours": had some or no intake from_h–to_h before. "working": within the
+    # typical duration of action. "worn_off": up to 12 h after it ended.
+    vol.Optional("when", default="hours"): vol.In(["hours", "working", "worn_off"]),
     vol.Required("present"): bool,
     vol.Required("from_h"): _HOURS,
     vol.Required("to_h"): _HOURS,

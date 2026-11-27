@@ -70,3 +70,34 @@ def level_at(dose_list: Iterable[tuple[float, float]], ts: float, settings: dict
     if peak <= 0:
         return 0.0
     return amount_at(dose_list, ts, settings, substance_id) / peak
+
+
+def effect_window(settings: dict[str, Any], substance_id: str) -> tuple[float, float] | None:
+    """(start, end) of the typical duration of action, in hours after one dose, or None.
+
+    Your own duration wins over the published one; without either there's
+    no window and the curve is drawn as plain "in your body".
+    """
+    sub = substance(settings, substance_id) or {}
+    published = PROFILES.get(sub.get("profile", ""), PROFILES["custom"]).get("effect") or {}
+    duration = sub.get("effect_h") or published.get("duration_h")
+    if not duration:
+        return None
+    onset = sub.get("onset_h")
+    if onset is None:
+        onset = published.get("onset_h", 0.0)
+    return float(onset), float(max(duration, onset))
+
+
+def working_intervals(dose_list: Iterable[tuple[float, float]], window: tuple[float, float] | None) -> list[tuple[float, float]]:
+    """Merged (start, end) timestamps within at least one dose's typical duration of action."""
+    if not window:
+        return []
+    out: list[list[float]] = []
+    for t0 in sorted(t for t, _ in dose_list):
+        a, b = t0 + window[0] * 3600, t0 + window[1] * 3600
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]

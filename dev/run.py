@@ -46,6 +46,10 @@ SETTINGS = {
          "items": [{"id": "elvanse_30", "name": "Elvanse 30", "amount": 30, "unit": "mg"}]},
     ],
     "comparisons": [
+        {"id": "elvanse_working", "name": "Within Elvanse's duration of action",
+         "conditions": [{"substance": "elvanse", "when": "working", "present": True, "from_h": 0, "to_h": 0}]},
+        {"id": "elvanse_worn_off", "name": "After Elvanse's duration of action",
+         "conditions": [{"substance": "elvanse", "when": "worn_off", "present": True, "from_h": 0, "to_h": 0}]},
         {"id": "elvanse_coffee", "name": "Elvanse today, coffee 1–4 h ago",
          "conditions": [{"substance": "elvanse", "present": True, "from_h": 0, "to_h": 12},
                         {"substance": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
@@ -112,7 +116,7 @@ async def main() -> None:
     j = Journal(tempfile.mkdtemp())
     await j.start()
     await seed(j)
-    runner = web.AppRunner(create_app(j, FakeHA(), None))
+    runner = web.AppRunner(create_app(j, FakeHA(), None, cache_scripts=False))
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
     print(f"Daybook dev server on http://localhost:{port}", flush=True)

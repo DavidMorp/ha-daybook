@@ -8,7 +8,7 @@ import pytest
 
 from daybook_app.core import Journal, JournalError
 from daybook_app.mqtt_link import MqttLink, parse_log
-from daybook_app.server import create_app
+from daybook_app.server import create_app, web_fingerprint
 from daybook_app.sport import SportTracker, window_overlap_seconds
 
 TZ = ZoneInfo("Europe/Amsterdam")
@@ -37,8 +37,19 @@ async def test_journal_fills_amount_and_rejects_unknown_items(journal):
 async def test_web_api(aiohttp_client, journal):
     client = await aiohttp_client(create_app(journal))
     page = await client.get("/")
-    assert page.status == 200 and "daybook-app" in await page.text()
-    assert (await client.get("/static/daybook.js")).status == 200
+    html = await page.text()
+    assert page.status == 200 and "daybook-app" in html and page.headers["Cache-Control"] == "no-cache"
+    # Scripts are served under a fingerprint of their content, so a new
+    # version always gets new URLs (no stale browser copies).
+    fp = web_fingerprint()
+    assert f"./static/{fp}/daybook.js" in html
+    js = await client.get(f"/static/{fp}/daybook.js")
+    assert js.status == 200 and "immutable" in js.headers["Cache-Control"]
+    assert (await client.get(f"/static/{fp}/pk.js")).status == 200  # relative imports
+    assert (await client.get("/static/0123456789ab/daybook.js")).status == 404
+    assert (await client.get(f"/static/{fp}/..%2Fserver.py")).status == 404
+    plain = await client.get("/static/daybook.js")
+    assert plain.status == 200 and plain.headers["Cache-Control"] == "no-cache"
     ws = await client.ws_connect("/api/ws")
     await ws.send_json({"id": 1, "type": "daybook/subscribe"})
     assert (await ws.receive_json())["success"]

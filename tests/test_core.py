@@ -181,3 +181,22 @@ def test_insights_comparisons_days_and_sleep():
     split = r["sleep_split"]
     assert split["less"]["nights"] == 1 and split["more"]["nights"] == 1
     assert split["less"]["avg_hours"] == 8.0 and split["more"]["avg_hours"] == 6.5
+
+
+def test_effect_windows_and_working_conditions():
+    from daybook_app.model import effect_window, working_intervals
+    s = settings()  # Elvanse (published 1.5–13 h) and caffeine (no window)
+    assert effect_window(s, "lisdexamfetamine") == (1.5, 13.0)
+    assert effect_window(s, "caffeine") is None
+    s["substances"][0]["effect_h"] = 4  # your own window for coffee, onset defaults to 0
+    assert effect_window(s, "caffeine") == (0.0, 4.0)
+    spans = working_intervals([(0.0, 90), (2 * H, 90), (10 * H, 90)], (0.0, 4.0))
+    assert spans == [(0.0, 6 * H), (10 * H, 14 * H)]  # overlapping doses merge
+
+    working = {"lisdexamfetamine": working_intervals([(ts(16, 8), 30)], (1.5, 13.0))}
+    on = [{"substance": "lisdexamfetamine", "when": "working", "present": True, "from_h": 0, "to_h": 0}]
+    off = [{"substance": "lisdexamfetamine", "when": "worn_off", "present": True, "from_h": 0, "to_h": 0}]
+    for hour, w, o in ((9, False, False), (12, True, False), (21.5, False, True), (23, False, True)):
+        assert insights.matches(on, ts(16, hour), {}, working) is w, hour
+        assert insights.matches(off, ts(16, hour), {}, working) is o, hour
+    assert not insights.matches(off, ts(17, 10), {}, working)  # more than 12 h after

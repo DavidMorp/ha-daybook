@@ -1,7 +1,7 @@
 // Daybook panel. Plain web component, no build step, no external requests.
 import {
   HOUR, doses, levelAt, amountAt, substanceIds, substanceColor, substanceLabel, profileParams,
-  singleDosePeak, hoursUntilBelow, referenceAmount, allItems, findSubstance, unitOf,
+  singleDosePeak, hoursUntilBelow, referenceAmount, allItems, findSubstance, unitOf, effectWindow, workingIntervals,
 } from "./pk.js";
 import {
   SPORT_COLOR, SLEEP_COLOR, esc, fmtTime, fmtDuration, fmtHours, itemName, stateColor, intakeColor,
@@ -129,7 +129,48 @@ class DaybookApp extends HTMLElement {
     this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
     this.shadowRoot.addEventListener("change", (e) => this._onField(e));
     this.shadowRoot.addEventListener("input", (e) => this._onField(e, true));
+    // Hovering a substance's curve or legend entry shows its mg scale.
+    this.shadowRoot.addEventListener("pointerover", (e) => this._hoverSubstance(e.target.closest?.("[data-sub]")));
+    this.shadowRoot.addEventListener("pointerout", (e) => {
+      if (!e.relatedTarget?.closest?.("[data-sub]")) this._hoverSubstance(null);
+    });
     this._markTab();
+    // Re-pack the cards when the panel's width changes the number of columns.
+    new ResizeObserver(() => {
+      if (this._columns !== this._columnCount()) this._layout();
+    }).observe(this);
+  }
+
+  _columnCount() {
+    const width = this._main.clientWidth || this.getBoundingClientRect().width;
+    return Math.max(1, Math.floor((width + 16) / (480 + 16)));
+  }
+
+  /** Masonry: each card goes, in order, into the currently shortest column. */
+  _layout() {
+    this._columns = this._columnCount();
+    for (const grid of this._main.querySelectorAll(".grid")) {
+      const cards = [...grid.querySelectorAll(":scope > .card, :scope > .col > .card")];
+      const cols = Array.from({ length: Math.min(this._columns, cards.length) || 1 }, () => {
+        const c = document.createElement("div");
+        c.className = "col";
+        return c;
+      });
+      grid.replaceChildren(...cols);
+      for (const card of cards) {
+        const shortest = cols.reduce((a, b) => (b.offsetHeight < a.offsetHeight ? b : a));
+        shortest.append(card);
+      }
+    }
+  }
+
+  _hoverSubstance(el) {
+    const pid = el?.dataset.sub || null;
+    const svg = el ? el.closest(".card")?.querySelector("svg.strip") : this.shadowRoot.querySelector("svg.strip");
+    if (!svg || svg.dataset.hover === (pid || "")) return;
+    svg.dataset.hover = pid || "";
+    svg.querySelectorAll(".mgscale").forEach((g) => (g.style.display = g.dataset.scale === pid ? "" : "none"));
+    svg.querySelectorAll("[data-curve]").forEach((c) => (c.style.opacity = !pid || c.dataset.curve === pid ? "" : ".2"));
   }
 
   get _narrow() {
@@ -218,6 +259,7 @@ class DaybookApp extends HTMLElement {
       settings: () => this._renderSettings(),
     };
     this._main.innerHTML = views[this._view]();
+    this._layout();
     this._renderDialog();
   }
 
@@ -225,17 +267,19 @@ class DaybookApp extends HTMLElement {
     const s = this._settings;
     return `<div class="legend">
       ${s.states.map((st) => `<span><i class="sw mark" style="background:${st.color}"></i>${esc(st.name)}</span>`).join("")}
-      ${substanceIds(s).map((pid) => `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))}</span>`).join("")}
+      ${substanceIds(s).map((pid) => `<span data-sub="${pid}"><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))}</span>`).join("")}
       <span><i class="sw" style="background:${SPORT_COLOR};opacity:.35"></i>Sport</span>
-      <span><i class="sw" style="background:${SLEEP_COLOR};opacity:.3"></i>Sleep</span></div>`;
+      <span><i class="sw" style="background:${SLEEP_COLOR};opacity:.3"></i>Sleep</span></div>
+      <div class="legend key">
+      ${substanceIds(s).some((pid) => effectWindow(s, this._profiles, pid)) ? `<span><i class="sw solid"></i>Within typical duration of action</span><span><i class="sw dash"></i>Outside typical duration of action</span>` : ""}</div>`;
   }
 
   _laneLabels(svgY, h, x) {
-    const laneH = 11;
-    const stateLane = svgY + h - 2 * laneH - 3;
+    const laneH = 13;
+    const stateLane = svgY + h - 2 * laneH - 4;
     const intakeLane = svgY + h - laneH;
-    return `<text x="${x}" y="${stateLane + 9}" class="tick" text-anchor="end">Felt</text>
-      <text x="${x}" y="${intakeLane + 9}" class="tick" text-anchor="end">Took</text>`;
+    return `<text x="${x}" y="${stateLane + 10}" class="tick" text-anchor="end">Felt</text>
+      <text x="${x}" y="${intakeLane + 10}" class="tick" text-anchor="end">Took</text>`;
   }
 
   // -- Day view -------------------------------------------------------
@@ -259,7 +303,13 @@ class DaybookApp extends HTMLElement {
           if (level < s.negligible_share) return "";
           const unit = unitOf(s, pid);
           const amount = amountAt(d, now, s, this._profiles, pid);
-          return `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))} ≈ ${Math.round(amount)} ${esc(unit)}</span>`;
+          const win = effectWindow(s, this._profiles, pid);
+          let status = "";
+          if (win) {
+            const span = workingIntervals(d, win).find(([a, b]) => now >= a && now <= b);
+            status = span ? ` · typical duration of action ends in about ${fmtHours(Math.max(0.25, (span[1] - now) / HOUR))}` : " · outside its typical duration of action";
+          }
+          return `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))} ≈ ${Math.round(amount)} ${esc(unit)}${status}</span>`;
         }).join("")
       : "";
 
@@ -270,7 +320,7 @@ class DaybookApp extends HTMLElement {
     const mid = this._midnight(this._dayStart);
     const tFrom = mid + s.axis_start_hour * HOUR;
     const tTo = mid + s.axis_end_hour * HOUR;
-    const W = 680, x0 = 34, w = W - x0 - 6, H = 150;
+    const W = 680, x0 = 40, w = W - x0 - 6, H = 160;
 
     return `
       <div class="daynav">
@@ -301,7 +351,7 @@ class DaybookApp extends HTMLElement {
           ${this._legend()}
           <svg viewBox="0 0 ${W} ${H + 22}" class="strip" role="img" aria-label="Timeline of the day">
             ${hourAxis({ tFrom, tTo, x0, w, y: 12, y2: H + 20, labeler: clockLabel })}
-            ${timelineRow({ entries: this._entries, tFrom, tTo, x0, w, y: 20, h: H, settings: s, profiles: this._profiles })}
+            ${timelineRow({ entries: this._entries, tFrom, tTo, x0, w, y: 20, h: H, settings: s, profiles: this._profiles, mgScales: true })}
             ${this._laneLabels(20, H, x0 - 4)}
             ${this._isToday() && now > tFrom && now < tTo ? `<line x1="${x0 + ((now - tFrom) / (tTo - tFrom)) * w}" x2="${x0 + ((now - tFrom) / (tTo - tFrom)) * w}" y1="18" y2="${H + 20}" stroke="var(--accent)" stroke-width="1.5"/>` : ""}
           </svg>
@@ -538,33 +588,42 @@ class DaybookApp extends HTMLElement {
     // Yours first (with your colours and overrides), then the profiles you don't use.
     const mine = s.substances.map((sub) => {
       const [profile, hl, tm] = profileParams(s, this._profiles, sub.id);
-      return { key: sub.id, name: sub.name, profile, hl, tm, color: sub.color, on: !prefs.hidden.includes(sub.id), own: true };
+      return { key: sub.id, name: sub.name, profile, hl, tm, color: sub.color, win: effectWindow(s, this._profiles, sub.id), on: !prefs.hidden.includes(sub.id), own: true };
     });
     const used = new Set(s.substances.map((sub) => sub.profile));
     const others = Object.entries(this._profiles)
       .filter(([id]) => id !== "custom" && !used.has(id))
-      .map(([id, p], i) => ({ key: `ref:${id}`, name: p.name, profile: p, color: PALETTE[i % PALETTE.length], on: prefs.extra.includes(id), own: false }));
+      .map(([id, p], i) => ({ key: `ref:${id}`, name: p.name, profile: p, color: PALETTE[i % PALETTE.length], win: p.effect ? [p.effect.onset_h, p.effect.duration_h] : null, on: prefs.extra.includes(id), own: false }));
     const shown = [...mine, ...others].filter((c) => c.on);
     const card = (c) => {
       const p = c.profile;
       const half = hoursUntilBelow(p, 0.5, c.hl, c.tm);
       const gone = hoursUntilBelow(p, neg, c.hl, c.tm);
       const what = c.own && c.name !== p.name ? p.name : p.examples;
-      const badges = `${c.hl || c.tm ? ' <span class="badge">Your settings</span>' : ""}${p.verified ? "" : ' <span class="badge">Estimate</span>'}`;
+      const yours = c.own && (c.hl || c.tm || findSubstance(s, c.key)?.effect_h || findSubstance(s, c.key)?.onset_h != null);
+      const badges = `${yours ? ' <span class="badge">Your settings</span>' : ""}${p.verified ? "" : ' <span class="badge">Estimate</span>'}`;
+      const longTerm = ["guanfacine_er", "atomoxetine"].includes(Object.keys(this._profiles).find((k) => this._profiles[k] === p));
+      const effect = c.win
+        ? `Typical duration of action: about ${fmtHours(c.win[0])} to ${fmtHours(c.win[1])} after a dose${p.effect && !yours ? ` (studies: ends after ${p.effect.range_h[0]}–${p.effect.range_h[1]} h)` : ""}`
+        : longTerm ? "Works over weeks of daily use, not dose by dose" : "No typical duration of action. You can set your own in Settings.";
       return `<label class="subst ${c.on ? "on" : ""}">
         <input type="checkbox" data-field="subst:${esc(c.key)}" ${c.on ? "checked" : ""}>
         <i class="sw line" style="background:${c.color}"></i>
         <span><b>${esc(c.name)}</b> <span class="muted">${esc(what || "")}</span>${badges}
         <span class="facts">Peaks after ${fmtHours(c.tm || p.tmax_h)} · half-life ${round1(c.hl || p.half_life_h)} h${p.half_life_range_h ? ` (people vary: ${p.half_life_range_h[0]}–${p.half_life_range_h[1]} h)` : ""}</span>
-        <span class="facts">${half ? `Half gone after ${fmtHours(half)}` : ""}${gone ? ` · effectively gone after ${fmtHours(gone)}` : ""}</span>
+        <span class="facts">${esc(effect)}</span>
+        <span class="facts">${half ? `Half gone after ${fmtHours(half)}` : ""}${gone ? ` · cleared after ${fmtHours(gone)}` : ""}</span>
         ${p.notes ? `<span class="facts">${esc(p.notes)}</span>` : ""}
-        ${p.sources.length ? `<span class="facts">${p.sources.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noreferrer">Source ${i + 1}</a>`).join(" · ")}</span>` : ""}</span></label>`;
+        ${[...p.sources, ...(p.effect?.sources || [])].length ? `<span class="facts">${[...new Set([...p.sources, ...(p.effect?.sources || [])])].map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noreferrer">Source ${i + 1}</a>`).join(" · ")}</span>` : ""}</span></label>`;
     };
     return `
       <div class="daynav"><h2>How long things stay in your body</h2></div>
       <section class="card wide">
-        <div class="sub2">One dose of each, as a share of its own peak. The dot marks when it drops below ${Math.round(neg * 100)}% of its peak, which Daybook treats as gone. Your body clears the rest slowly, so the faint tail is real but small. Dashed lines are rougher estimates.</div>
+        <div class="sub2">One dose of each, as a share of its own peak.</div>
         <div class="legend">${shown.map((c) => `<span><i class="sw line" style="background:${c.color}"></i>${esc(c.name)}</span>`).join("")}</div>
+        <div class="legend key"><span><i class="sw solid"></i>Within typical duration of action</span>
+          <span><i class="sw dash"></i>Outside typical duration of action</span>
+          <span>Dot and dotted line: below ${Math.round(neg * 100)}% of the peak, which Daybook treats as cleared</span></div>
         <svg viewBox="0 0 900 260" class="chart">${substanceChart(shown, { negligible: neg })}</svg>
         <p class="disclaimer">${esc(this._disclaimer)}</p>
       </section>
@@ -615,6 +674,9 @@ class DaybookApp extends HTMLElement {
           <div class="row"><label>Profile <select data-path="substances.${i}.profile">${profileOpts(sub.profile)}</select></label></div>
           <div class="row"><label>Half-life ${num(`substances.${i}.half_life_h`, sub.half_life_h, `step="0.1" placeholder="${p.half_life_h}"`)} h</label>
             <label>Time to peak ${num(`substances.${i}.tmax_h`, sub.tmax_h, `step="0.1" placeholder="${p.tmax_h}"`)} h</label></div>
+          <div class="row"><label>Typical duration of action from ${num(`substances.${i}.onset_h`, sub.onset_h, `step="0.25" min="0" placeholder="${p.effect?.onset_h ?? 0}"`)} h</label>
+            <label>to ${num(`substances.${i}.effect_h`, sub.effect_h, `step="0.5" min="0.25" placeholder="${p.effect?.duration_h ?? "–"}"`)} h after a dose</label></div>
+          <div class="row"><span class="muted">Leave empty for published averages.${p.effect ? "" : " Without an end, Daybook draws the whole curve as in your body."}</span></div>
           <div class="row"><label class="check"><input type="checkbox" data-path="substances.${i}.ha_sensor" data-type="bool" ${sub.ha_sensor ? "checked" : ""}> Show how much is in your body as a Home Assistant sensor</label></div>
           <div class="row"><button class="ghost danger" data-action="remove:substances:${i}">Remove ${esc(sub.name)} and what's in it</button></div></div>` : ""}
         ${items}
@@ -624,11 +686,17 @@ class DaybookApp extends HTMLElement {
     const comparisons = d.comparisons.map((c, i) => `<div class="block">
         <div class="row">${txt(`comparisons.${i}.name`, c.name, 'aria-label="Line name"')}
           <button class="icon ghost" data-action="remove:comparisons:${i}" aria-label="Remove line">×</button></div>
-        ${c.conditions.map((cond, j) => `<div class="row cond"><span class="muted lead">${j ? "and" : "Had"}</span>
-          <select data-path="comparisons.${i}.conditions.${j}.present" data-type="boolsel" aria-label="Had or not">${opt("true", cond.present, "some")}${opt("false", cond.present, "no")}</select>
+        ${c.conditions.map((cond, j) => {
+          const when = cond.when || "hours";
+          const how = when === "hours" ? (cond.present ? "some" : "none") : when;
+          const hasWindow = !!effectWindow(d, this._profiles, cond.substance);
+          const hows = [["some", "had some"], ["none", "had none"], ...(hasWindow || when !== "hours" ? [["working", "within duration of action"], ["worn_off", "after duration of action (up to 12 h)"]] : [])];
+          return `<div class="row cond"><span class="muted lead">${j ? "and" : "When"}</span>
           <select data-path="comparisons.${i}.conditions.${j}.substance" aria-label="Substance">${subOpts(cond.substance)}</select>
-          ${num(`comparisons.${i}.conditions.${j}.from_h`, cond.from_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="From hours before"')}<span class="muted">–</span>${num(`comparisons.${i}.conditions.${j}.to_h`, cond.to_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="To hours before"')}<span class="muted">h before</span>
-          <button class="icon ghost" data-action="rmcond:${i}:${j}" aria-label="Remove condition">×</button></div>`).join("")}
+          <select data-cond="${i}:${j}" aria-label="Condition">${hows.map(([v, l]) => opt(v, how, l)).join("")}</select>
+          ${when === "hours" ? `${num(`comparisons.${i}.conditions.${j}.from_h`, cond.from_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="From hours before"')}<span class="muted">–</span>${num(`comparisons.${i}.conditions.${j}.to_h`, cond.to_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="To hours before"')}<span class="muted">h before</span>` : ""}
+          <button class="icon ghost" data-action="rmcond:${i}:${j}" aria-label="Remove condition">×</button></div>`;
+        }).join("")}
         <div class="row"><button class="ghost" data-action="addcond:${i}">Add condition</button>${c.conditions.length ? "" : '<span class="muted">No conditions: counts every check-in</span>'}</div></div>`).join("");
 
     const sport = d.sport_zones.map((z, i) => `<div class="block">
@@ -661,7 +729,7 @@ class DaybookApp extends HTMLElement {
           ${takes || '<p class="muted">Nothing yet.</p>'}
           <div class="row"><button class="ghost" data-action="add:substances">Add substance</button></div>
           <div class="row"><label>Treat as gone below ${num("negligible_share", Math.round(d.negligible_share * 100), 'min="1" max="50" data-scale="100"')} % of one usual dose's peak</label></div></section>
-        <section class="card" id="comparisons"><h3>Comparison lines</h3><div class="sub2">The lines in "How you felt, depending on what you'd had" on the Patterns tab. Each condition looks at a window before every check-in, for example "had some caffeine 1–4 h before".</div>
+        <section class="card" id="comparisons"><h3>Comparison lines</h3><div class="sub2">The lines in "How you felt, depending on what you'd had" on the Patterns tab. Each condition is checked at every check-in, for example "caffeine, had some 1–4 h before" or "Elvanse, within duration of action".</div>
           ${comparisons}<button class="ghost" data-action="add:comparisons">Add line</button></section>
         <section class="card"><h3>Sport places</h3>
           <div class="sub2">Uses zones and people from Home Assistant. A stay becomes a suggested sport entry you confirm.</div>
@@ -897,6 +965,14 @@ class DaybookApp extends HTMLElement {
   // -- Events ---------------------------------------------------------
   _onField(ev, live = false) {
     const t = ev.target;
+    if (t.dataset.cond && this._draft && !live) {
+      const [i, j] = t.dataset.cond.split(":").map(Number);
+      const cond = this._draft.comparisons[i].conditions[j];
+      if (t.value === "some" || t.value === "none") { cond.when = "hours"; cond.present = t.value === "some"; }
+      else cond.when = t.value;
+      this._render();
+      return;
+    }
     if (t.dataset.move && this._draft && !live && t.value) {
       const [i, j] = t.dataset.move.split(":").map(Number);
       const [item] = this._draft.substances[i].items.splice(j, 1);
@@ -907,7 +983,7 @@ class DaybookApp extends HTMLElement {
     if (t.dataset.path && this._draft) {
       const v = t.dataset.type === "bool" ? t.checked : t.value;
       this._setPath(t.dataset.path, v, t.dataset.type, Number(t.dataset.scale) || 1);
-      if (!live && /(\.schedule|\.profile)$/.test(t.dataset.path)) this._render();
+      if (!live && /(\.schedule|\.profile|\.substance|\.effect_h)$/.test(t.dataset.path)) this._render();
       return;
     }
     if (live) return;
@@ -1045,8 +1121,8 @@ nav { display:flex; gap:2px; overflow-x:auto; }
 .tab.active { background:var(--chip); color:var(--text); }
 main { max-width:1840px; margin:0 auto; padding:var(--gap); }
 /* Masonry: cards flow into as many columns as fit, each column packed to the top. */
-.grid { columns:auto 480px; column-gap:var(--gap); }
-.grid > .card { break-inside:avoid; margin:0 0 var(--gap); width:100%; display:inline-block; }
+.grid { display:flex; gap:var(--gap); align-items:flex-start; }
+.grid > .col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:var(--gap); }
 .card { background:var(--card); border-radius:14px; border:1px solid var(--line); padding:16px 18px; box-sizing:border-box; min-width:0; }
 .card.wide, .card.error { margin-bottom:var(--gap); }
 .card.error { color:var(--danger); }
@@ -1086,9 +1162,13 @@ svg .onbar { fill:#fff; font-size:11px; }
 .legend { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px; color:var(--muted); margin:4px 0 8px; }
 .legend.now { color:var(--text); font-size:13px; }
 .legend span { display:inline-flex; align-items:center; gap:5px; }
+.legend span[data-sub] { cursor:default; }
 .sw { width:12px; height:8px; border-radius:2px; display:inline-block; flex:none; }
-.sw.mark { width:5px; height:11px; border-radius:2px; }
+.sw.mark { width:5px; height:14px; border-radius:2px; }
 .sw.line { height:3px; width:14px; }
+.sw.solid { height:2px; width:16px; background:var(--muted); }
+.sw.dash { height:0; width:16px; background:none; border-top:2px dashed var(--muted); border-radius:0; }
+.legend.key { margin-top:-4px; }
 .entries { list-style:none; margin:12px 0 0; padding:0; }
 .entries li { display:flex; align-items:center; gap:10px; padding:9px 4px; border-top:1px solid var(--line); cursor:pointer; }
 .entries li:hover { background:var(--chip); }
@@ -1132,7 +1212,7 @@ input[type=text] { flex:1; min-width:120px; }
 input[type=number] { width:76px; }
 input.tiny { width:56px; }
 .row.cond { gap:6px; }
-.row.cond .lead { width:30px; }
+.row.cond .lead { width:40px; }
 input.short { width:56px; flex:none; min-width:0; }
 input[type=color] { width:36px; height:32px; padding:2px; }
 .unit { display:inline-flex; align-items:center; gap:6px; }

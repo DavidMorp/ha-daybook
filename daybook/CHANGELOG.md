@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Medications show their typical duration of action from studies: the curve is solid within it and dashed outside it, while some is still in your body. You can set your own for any substance (also coffee).
+- Comparison lines can use "within duration of action" and "after duration of action (up to 12 h)".
+- Curves are lines only, without numbers: the height is how much is in your body, each substance scaled to one usual dose of it. Each curve starts at the baseline at the dose. Dashed lines no longer mean "rough estimate".
+- Hover a curve, or its name in the legend, to see its scale in mg; the other curves fade. Felt and Took marks are taller.
+- The Day view's "Now" line says when the typical duration of action ends.
+- Cards are packed into columns more reliably (the Day view's two cards sit side by side again).
+- Fixed: after an update, browsers could keep running the old panel scripts ("settings.items is undefined"). Scripts are now served under a fingerprint of their content, so each version loads fresh files.
+
 ## 0.3.0
 
 - What you take is grouped by substance in one Settings card: each substance (Caffeine, Elvanse…) holds the things you take that contain it. You can now have more than one custom substance.

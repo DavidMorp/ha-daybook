@@ -78,7 +78,9 @@ Each log fires a `daybook_logged` event in Home Assistant and publishes `daybook
 | Atomoxetine | Strattera | 1–2 h | ~5 h (much longer in slow metabolisers) |
 | Custom | | you set it | you set it |
 
-You can override the half-life and time to peak for each substance. Elimination never quite reaches zero, so Daybook treats a substance as gone once it's below 10% of one usual dose's peak (adjustable). Sources are listed in the app and in [`substances.py`](daybook/daybook_app/substances.py).
+You can override the half-life and time to peak for each substance. Elimination never quite reaches zero, so Daybook treats a substance as cleared once it's below 10% of one usual dose's peak (adjustable).
+
+Being in your body isn't the same as having an effect. For stimulants, Daybook also knows the typical duration of action of one dose reported in labels and clinical reviews (for example about 1.5–13 h for lisdexamfetamine, 0.5–4 h for immediate-release methylphenidate). Curves are solid within it and dashed outside it. It says what studies found on average, not what you feel. Caffeine and non-stimulants have no default window; you can set your own for any substance. Sources are listed in the app and in [`substances.py`](daybook/daybook_app/substances.py).
 
 > These curves estimate how much is in your blood from population averages. They don't show how strong the effect is, effects usually end before the curve does, and your body may differ a lot. Daybook isn't medical advice: talk to your prescriber before changing how you take anything.
 

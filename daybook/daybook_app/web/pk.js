@@ -142,3 +142,25 @@ export function levelAt(doseList, ts, settings, profiles, id) {
   const peak = singleDosePeak(p, hl, tm) * referenceAmount(settings, id);
   return peak > 0 ? amountAt(doseList, ts, settings, profiles, id) / peak : 0;
 }
+
+/** [starts, stops] working in hours after one dose, or null (see model.py). */
+export function effectWindow(settings, profiles, id) {
+  const sub = findSubstance(settings, id) || {};
+  const pub = (profiles[sub.profile] || profiles.custom)?.effect || {};
+  const duration = sub.effect_h || pub.duration_h;
+  if (!duration) return null;
+  const onset = sub.onset_h ?? pub.onset_h ?? 0;
+  return [onset, Math.max(duration, onset)];
+}
+
+/** Merged [start, end] timestamps within at least one dose's typical duration of action. */
+export function workingIntervals(doseList, window) {
+  if (!window) return [];
+  const out = [];
+  for (const t0 of doseList.map(([t]) => t).sort((a, b) => a - b)) {
+    const a = t0 + window[0] * HOUR, b = t0 + window[1] * HOUR;
+    if (out.length && a <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}

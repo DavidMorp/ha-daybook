@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 from .const import KIND_INTAKE, KIND_SLEEP, KIND_STATE, STATUS_CONFIRMED
-from .model import doses, level_at, substance_ids
+from .model import doses, effect_window, level_at, substance_ids, working_intervals
 
 BANDS = ((6, 10), (10, 14), (14, 18), (18, 22), (22, 30))
 BAND_LABELS = ("6–10", "10–14", "14–18", "18–22", "22+")
@@ -47,12 +47,29 @@ def _band(hour: float) -> int | None:
     return None
 
 
-def matches(conditions: list[dict[str, Any]], ts: float, intake_times: dict[str, list[float]]) -> bool:
+WORN_OFF_FOR = 12 * 3600  # how long "after it wore off" lasts
+
+
+def matches(
+    conditions: list[dict[str, Any]],
+    ts: float,
+    intake_times: dict[str, list[float]],
+    working: dict[str, list[tuple[float, float]]] | None = None,
+) -> bool:
     """True when every condition holds for a check-in at ts."""
+    working = working or {}
     for c in conditions:
-        lo, hi = ts - c["to_h"] * 3600, ts - c["from_h"] * 3600
-        found = any(lo <= t <= hi for t in intake_times.get(c["substance"], []))
-        if found != c["present"]:
+        when = c.get("when", "hours")
+        spans = working.get(c["substance"], [])
+        now_working = any(a <= ts <= b for a, b in spans)
+        if when == "working":
+            ok = now_working
+        elif when == "worn_off":
+            ok = not now_working and any(b <= ts <= b + WORN_OFF_FOR for _, b in spans)
+        else:
+            lo, hi = ts - c["to_h"] * 3600, ts - c["from_h"] * 3600
+            ok = any(lo <= t <= hi for t in intake_times.get(c["substance"], [])) == c["present"]
+        if not ok:
             return False
     return True
 
@@ -65,6 +82,7 @@ def compute(entries: list[dict[str, Any]], settings: dict[str, Any], tz: tzinfo)
     states = _confirmed(entries, KIND_STATE)
     sleeps = _confirmed(entries, KIND_SLEEP)
     intake_times = {p: sorted(t for t, _ in doses(entries, settings, p)) for p in profiles}
+    working = {p: working_intervals(doses(entries, settings, p), effect_window(settings, p)) for p in profiles}
     all_days = {day_key(e["start"], tz, dsh) for e in entries if not e.get("deleted")}
     state_days = {day_key(s["start"], tz, dsh) for s in states}
 
@@ -80,7 +98,7 @@ def compute(entries: list[dict[str, Any]], settings: dict[str, Any], tz: tzinfo)
     comparisons = []
     for comp in settings.get("comparisons", []):
         counts = Counter(
-            s["item"] for s in states if matches(comp["conditions"], s["start"], intake_times)
+            s["item"] for s in states if matches(comp["conditions"], s["start"], intake_times, working)
         )
         comparisons.append({"id": comp["id"], "name": comp["name"], "counts": dict(counts)})
 

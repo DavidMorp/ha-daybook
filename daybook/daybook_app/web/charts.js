@@ -1,7 +1,8 @@
 // SVG renderers shared by the views.
 import {
   HOUR, doses, levelAt, substanceIds, substanceColor, substanceLabel, amountFraction,
-  singleDosePeak, hoursUntilBelow, allItems, itemSubstance,
+  singleDosePeak, hoursUntilBelow, allItems, itemSubstance, effectWindow, workingIntervals,
+  profileParams, referenceAmount, unitOf,
 } from "./pk.js";
 
 export const SPORT_COLOR = "#0ca30c";
@@ -20,7 +21,7 @@ export function fmtTime(ts) {
 export function fmtDuration(seconds) {
   const m = Math.round(seconds / 60);
   const h = Math.floor(m / 60);
-  return h ? `${h} h ${m % 60} min` : `${m} min`;
+  return h ? (m % 60 ? `${h} h ${m % 60} min` : `${h} h`) : `${m} min`;
 }
 
 export function fmtHours(h) {
@@ -48,19 +49,24 @@ const LEVEL_SCALE = 1.4; // relative level at full curve height
 
 /**
  * One timeline row for [tFrom, tTo] mapped to [x0, x0 + w].
- * Curves in the upper part, marks for check-ins and intakes on two lanes at
- * the bottom. `entries` should include ~1.5 days before tFrom for carry-over.
+ *
+ * Curves show how much of each substance is in your body, each scaled to
+ * one usual dose of it (so one coffee and one Elvanse peak at the same
+ * height, and a second coffee stacks higher). Hovering a curve shows its
+ * scale in mg (see mgScale). Check-ins and intakes are marks on two lanes at
+ * the bottom. `entries`
+ * should include ~1.5 days before tFrom for carry-over.
  */
-export function timelineRow({ entries, tFrom, tTo, x0, w, y, h, settings, profiles, interactive = true, scale = null }) {
+export function timelineRow({ entries, tFrom, tTo, x0, w, y, h, settings, profiles, interactive = true, scale = null, mgScales = false }) {
   const x = (t) => x0 + ((t - tFrom) / (tTo - tFrom)) * w;
   const inRange = (t) => t >= tFrom && t <= tTo;
   const live = entries.filter((e) => e.status !== "rejected" && !e.deleted);
-  const laneH = 11;
-  const stateLane = y + h - 2 * laneH - 3;
+  const laneH = 13;
+  const stateLane = y + h - 2 * laneH - 4;
   const intakeLane = y + h - laneH;
-  const base = stateLane - 3;
+  const base = stateLane - 5;
   const top = y + 4;
-  const usable = base - top;
+  const usable = base - top - 4;
   const negligible = settings.negligible_share ?? 0.1;
   let o = "";
 
@@ -80,53 +86,96 @@ export function timelineRow({ entries, tFrom, tTo, x0, w, y, h, settings, profil
   }
   o += `<line x1="${x0}" x2="${x0 + w}" y1="${base}" y2="${base}" stroke="var(--line)" stroke-width="1"/>`;
 
-  // Curves: one per substance, cut where it's effectively gone.
-  const steps = 160;
+  // One line per substance: solid within the typical duration of action (or
+  // always, without one), dashed outside it. A curve starts at the baseline
+  // at the dose and is cut once it has fallen below the "cleared" share.
+  const grid = [];
+  for (let i = 0; i <= 240; i++) grid.push(tFrom + ((tTo - tFrom) * i) / 240);
   const series = [];
   let maxLevel = 0;
   for (const pid of substanceIds(settings)) {
     const d = doses(live, settings, pid);
     if (!d.length) continue;
-    const values = [];
-    for (let i = 0; i <= steps; i++) {
-      const t = tFrom + ((tTo - tFrom) * i) / steps;
+    const win = effectWindow(settings, profiles, pid);
+    const spans = workingIntervals(d, win);
+    const times = [...grid, ...d.map(([t]) => t).filter(inRange)].sort((a, b) => a - b);
+    const values = times.map((t) => {
       const v = levelAt(d, t, settings, profiles, pid);
-      values.push([t, v]);
       maxLevel = Math.max(maxLevel, v);
-    }
-    series.push([pid, values]);
+      return [t, v, !win || spans.some(([a, b]) => t >= a && t <= b)];
+    });
+    series.push([pid, d, values]);
   }
-  const fullScale = scale || Math.max(LEVEL_SCALE, maxLevel * 1.08);
-  for (const [pid, values] of series) {
+  const fullScale = scale || Math.max(LEVEL_SCALE, maxLevel * 1.05);
+  const yOf = (v) => base - Math.min(1.02, v / fullScale) * usable;
+  for (const [pid, d, values] of series) {
     const color = substanceColor(settings, pid);
-    let seg = [];
-    const segs = [];
-    for (const [t, v] of values) {
-      if (v >= negligible) seg.push([x(t), base - Math.min(1.02, v / fullScale) * usable]);
-      else if (seg.length) { segs.push(seg); seg = []; }
+    const name = esc(substanceLabel(settings, profiles, pid));
+    // Runs of points with the same style; neighbours share a point so lines join.
+    let run = null;
+    const runs = [];
+    values.forEach(([t, v, inside], i) => {
+      const rising = (values[i + 1]?.[1] ?? 0) > v;
+      if (v < negligible && !rising) { run = null; return; }
+      const pt = [x(t), yOf(v)];
+      if (!run || run.inside !== inside) {
+        const prev = run?.pts[run.pts.length - 1];
+        run = { inside, pts: prev ? [prev] : [] };
+        runs.push(run);
+      }
+      run.pts.push(pt);
+    });
+    for (const r of runs) {
+      if (r.pts.length < 2) continue;
+      const dd = r.pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+      o += r.inside
+        ? `<path data-curve="${pid}" d="${dd}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+        : `<path data-curve="${pid}" d="${dd}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="4 3" stroke-linecap="round"/>`;
+      // A wider, invisible copy that's easy to point at.
+      if (mgScales) o += `<path data-sub="${pid}" d="${dd}" fill="none" stroke="transparent" stroke-width="12" pointer-events="stroke"><title>${name}</title></path>`;
     }
-    if (seg.length) segs.push(seg);
-    for (const s of segs) {
-      const line = s.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L");
-      o += `<path d="M${s[0][0].toFixed(1)},${base} L${line} L${s[s.length - 1][0].toFixed(1)},${base} Z" fill="${color}" opacity=".14"/>`;
-      o += `<path d="M${line}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"><title>${esc(substanceLabel(settings, profiles, pid))}</title></path>`;
-    }
+    if (mgScales) o += mgScale({ pid, settings, profiles, fullScale, x0, base, usable });
   }
 
   // Bottom lanes: what you felt, then what you took.
   for (const e of live) {
     if (!inRange(e.start)) continue;
     const draft = e.status === "draft" ? ' opacity=".45"' : "";
-    if (e.kind === "state") {
+    if (e.kind === "intake") {
+      const amount = e.value?.amount != null ? ` · ${e.value.amount} ${esc(e.value.unit || "")}` : "";
+      o += `<rect x="${x(e.start) - 2.5}" y="${intakeLane}" width="5" height="${laneH}" rx="2" fill="${intakeColor(settings, e.item)}"${draft}${hit(e, interactive)}><title>${esc(itemName(settings, e.kind, e.item))} ${fmtTime(e.start)}${amount}</title></rect>`;
+    } else if (e.kind === "state") {
       o += `<rect x="${x(e.start) - 2.5}" y="${stateLane}" width="5" height="${laneH}" rx="2" fill="${stateColor(settings, e.item)}"${draft}${hit(e, interactive)}><title>${esc(itemName(settings, e.kind, e.item))} ${fmtTime(e.start)}${e.note ? ` · ${esc(e.note)}` : ""}</title></rect>`;
     } else if (e.kind === "note") {
       o += `<rect x="${x(e.start) - 2.5}" y="${stateLane}" width="5" height="${laneH}" rx="2" fill="none" stroke="${NOTE_COLOR}" stroke-width="1.5"${hit(e, interactive)}><title>${esc(e.note || "Note")}</title></rect>`;
-    } else if (e.kind === "intake") {
-      const amount = e.value?.amount != null ? ` · ${e.value.amount} ${esc(e.value.unit || "")}` : "";
-      o += `<rect x="${x(e.start) - 2.5}" y="${intakeLane}" width="5" height="${laneH}" rx="2" fill="${intakeColor(settings, e.item)}"${draft}${hit(e, interactive)}><title>${esc(itemName(settings, e.kind, e.item))} ${fmtTime(e.start)}${amount}</title></rect>`;
     }
   }
   return o;
+}
+
+/**
+ * The mg scale of one substance on the timeline's left edge, hidden until
+ * its curve or legend entry is hovered. Height is shared by all substances,
+ * so each gets its own ticks: level 1.0 is the peak of one usual dose.
+ */
+function mgScale({ pid, settings, profiles, fullScale, x0, base, usable }) {
+  const [p, hl, tm] = profileParams(settings, profiles, pid);
+  const peakAmount = singleDosePeak(p, hl, tm) * referenceAmount(settings, pid);
+  const top = fullScale * peakAmount;
+  if (!(top > 0)) return "";
+  const raw = top / 4;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= raw);
+  const unit = esc(unitOf(settings, pid) || "mg");
+  let o = `<g class="mgscale" data-scale="${pid}" style="display:none">`;
+  o += `<rect x="0" y="${base - usable - 6}" width="${x0 - 2}" height="${usable + 9}" fill="var(--card)"/>`;
+  for (let v = 0; v <= top + 1e-9; v += step) {
+    const yy = base - (v / top) * usable;
+    o += `<line x1="${x0 - 3}" x2="${x0}" y1="${yy}" y2="${yy}" stroke="var(--muted)"/>`;
+    o += `<text x="${x0 - 5}" y="${yy + 4}" text-anchor="end" class="tick">${+v.toFixed(1)}</text>`;
+  }
+  o += `<text x="${x0 - 5}" y="${base - usable - 8}" text-anchor="end" class="tick">${unit}</text>`;
+  return o + "</g>";
 }
 
 function hit(e, interactive) {
@@ -177,7 +226,9 @@ export function stackedBars(groups, settings, { width = 600, minN = 1 } = {}) {
 
 /**
  * Reference curves: one dose of each substance, as a share of its own peak.
- * Solid while it matters; faint once below `negligible` of the peak.
+ * Same style as the timeline: solid within the typical duration of action (or always, if
+ * there's no effect window), dashed after, and it ends with a dot once it's
+ * cleared (below `negligible`). Labels live outside the chart.
  */
 export function substanceChart(entries, { width = 900, height = 260, hours = 24, negligible = 0.1 } = {}) {
   const x0 = 38, y0 = 10, w = width - x0 - 12, h = height - 36;
@@ -188,27 +239,34 @@ export function substanceChart(entries, { width = 900, height = 260, hours = 24,
     o += `<line x1="${x0}" x2="${x0 + w}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/>`;
     o += `<text x="${x0 - 6}" y="${y(v) + 4}" text-anchor="end" class="tick">${Math.round(v * 100)}%</text>`;
   }
-  o += `<rect x="${x0}" y="${y(negligible)}" width="${w}" height="${h - (y(negligible) - y0)}" fill="var(--line)" opacity=".35"/>`;
-  o += `<text x="${x0 + w - 4}" y="${y(negligible) - 4}" text-anchor="end" class="tick">Below ${Math.round(negligible * 100)}%: effectively gone</text>`;
+  o += `<line x1="${x0}" x2="${x0 + w}" y1="${y(negligible)}" y2="${y(negligible)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="1 3"/>`;
   for (let t = 0; t <= hours; t += 3) o += `<text x="${x(t)}" y="${y0 + h + 18}" text-anchor="middle" class="tick">${t} h</text>`;
-  for (const { profile, color, hl, tm, name } of entries) {
-    const label = name || profile.name;
+  for (const { profile, color, hl, tm, name, win } of entries) {
+    const label = esc(name || profile.name);
     const peak = singleDosePeak(profile, hl, tm);
-    const solid = [], faint = [];
+    const gone = hoursUntilBelow(profile, negligible, hl, tm);
+    const end = Math.min(hours, gone || hours);
+    const runs = [];
+    let run = null;
     for (let i = 0; i <= 288; i++) {
       const t = (hours * i) / 288;
-      const v = amountFraction(t, profile, hl, tm) / peak;
-      const pt = `${x(t).toFixed(1)},${y(v).toFixed(1)}`;
-      const after = t > profile.tmax_h && v < negligible;
-      (after ? faint : solid).push(pt);
-      if (!after && faint.length === 0 && i === 288) faint.push(pt);
+      if (t > end) break;
+      const working = !win || (t >= win[0] && t <= win[1]);
+      const pt = `${x(t).toFixed(1)},${y(amountFraction(t, profile, hl, tm) / peak).toFixed(1)}`;
+      if (!run || run.working !== working) {
+        const prev = run?.pts[run.pts.length - 1];
+        run = { working, pts: prev ? [prev] : [] };
+        runs.push(run);
+      }
+      run.pts.push(pt);
     }
-    if (faint.length && solid.length) faint.unshift(solid[solid.length - 1]);
-    const dash = profile.verified ? "" : ' stroke-dasharray="6 4"';
-    o += `<path d="M${solid.join(" L")}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"${dash}><title>${esc(label)}</title></path>`;
-    if (faint.length > 1) o += `<path d="M${faint.join(" L")}" fill="none" stroke="${color}" stroke-width="1.4" opacity=".35" stroke-dasharray="2 4"/>`;
-    const gone = hoursUntilBelow(profile, negligible, hl, tm);
-    if (gone && gone <= hours) o += `<circle cx="${x(gone)}" cy="${y(negligible)}" r="4" fill="${color}"><title>${esc(label)}: effectively gone after ${fmtHours(gone)}</title></circle>`;
+    for (const r of runs) {
+      if (r.pts.length < 2) continue;
+      o += r.working
+        ? `<path d="M${r.pts.join(" L")}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"><title>${label}</title></path>`
+        : `<path d="M${r.pts.join(" L")}" fill="none" stroke="${color}" stroke-width="1.6" stroke-dasharray="5 4" stroke-linecap="round"><title>${label}: outside its typical duration of action</title></path>`;
+    }
+    if (gone && gone <= hours) o += `<circle cx="${x(gone)}" cy="${y(negligible)}" r="4" fill="${color}"><title>${label}: cleared after ${fmtHours(gone)}</title></circle>`;
   }
   return o;
 }
