@@ -12,6 +12,7 @@ from aiohttp import WSMsgType, web
 
 from .const import KINDS, STATUSES
 from .core import Journal, JournalError
+from .settings import merge_defaults
 from .substances import DISCLAIMER, PROFILES
 
 if TYPE_CHECKING:
@@ -79,6 +80,11 @@ class Api:
             if not isinstance(msg.get("settings"), dict):
                 raise JournalError("settings must be an object")
             return {"settings": await j.set_settings(msg["settings"])}
+        if t == "daybook/settings/normalize":
+            # Imported files may come from an older version: convert, don't save.
+            if not isinstance(msg.get("settings"), dict):
+                raise JournalError("settings must be an object")
+            return {"settings": merge_defaults(msg["settings"])}
         if t == "daybook/insights":
             days = int(_num(msg.get("days", 56), "days") or 56)
             return await j.insights(max(7, min(days, 730)))

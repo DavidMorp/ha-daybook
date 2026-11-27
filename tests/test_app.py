@@ -135,3 +135,22 @@ async def test_sport_zone_suggests_and_confirms(journal):
 def test_window_overlap_crossing_midnight():
     w = [{"weekdays": [5], "from": "23:00", "to": "01:00"}]
     assert window_overlap_seconds(local(28, 22, 30), local(29, 2), w, TZ) == 2 * 3600
+
+
+async def test_old_settings_are_converted_and_saved_on_start(tmp_path):
+    j = Journal(tmp_path, "Europe/Amsterdam")
+    await j.start()
+    old = {"items": [{"id": "ritalin", "name": "Ritalin", "profile": "mph_ir", "amount": 10, "unit": "mg"}],
+           "substances": {"mph_ir": {"color": "#534ab7", "label": ""}}, "ha_sensors": ["mph_ir"],
+           "comparisons": [], "sleep_profile": "mph_ir"}
+    j.store.kv_set("settings", old)
+    await j.stop()
+    j = Journal(tmp_path, "Europe/Amsterdam")
+    await j.start()
+    stored = j.store.kv_get("settings")
+    assert stored == j.settings and "items" not in stored
+    assert stored["substances"][0]["items"][0]["id"] == "ritalin"
+    saved = await j.add({"kind": "intake", "item": "ritalin"})  # the same item id still works
+    assert saved["value"]["amount"] == 10
+    assert (await j.level_now("mph_ir"))["amount"] >= 0
+    await j.stop()

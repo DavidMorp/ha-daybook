@@ -1,7 +1,7 @@
 // Daybook panel. Plain web component, no build step, no external requests.
 import {
-  HOUR, doses, levelAt, amountAt, profilesInUse, substanceColor, substanceLabel, profileParams,
-  singleDosePeak, hoursUntilBelow, referenceAmount,
+  HOUR, doses, levelAt, amountAt, substanceIds, substanceColor, substanceLabel, profileParams,
+  singleDosePeak, hoursUntilBelow, referenceAmount, allItems, findSubstance, unitOf,
 } from "./pk.js";
 import {
   SPORT_COLOR, SLEEP_COLOR, esc, fmtTime, fmtDuration, fmtHours, itemName, stateColor, intakeColor,
@@ -91,7 +91,7 @@ class DaybookApp extends HTMLElement {
     this._weekDays = 7;
     this._weekAlign = "clock";
     this._patternDays = 56;
-    this._shownSubstances = null;
+    this._openSubs = new WeakSet();
     this._dialog = null;
     this._toast = null;
     this._ha = { connected: false, mqtt: false, entities: {}, notify: [] };
@@ -179,8 +179,10 @@ class DaybookApp extends HTMLElement {
 
   /** For use inside sentences: your own names as written, generic names in lower case. */
   _noun(pid) {
-    const own = this._settings.substances?.[pid]?.label;
-    return own || (this._profiles[pid]?.name || pid).toLowerCase();
+    const sub = findSubstance(this._settings, pid);
+    if (!sub) return pid;
+    // "Caffeine" reads as "caffeine" mid-sentence; "Elvanse" stays as written.
+    return sub.name === this._profiles[sub.profile]?.name ? sub.name.toLowerCase() : sub.name;
   }
 
   // -- loading --------------------------------------------------------
@@ -223,7 +225,7 @@ class DaybookApp extends HTMLElement {
     const s = this._settings;
     return `<div class="legend">
       ${s.states.map((st) => `<span><i class="sw mark" style="background:${st.color}"></i>${esc(st.name)}</span>`).join("")}
-      ${profilesInUse(s).map((pid) => `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))}</span>`).join("")}
+      ${substanceIds(s).map((pid) => `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))}</span>`).join("")}
       <span><i class="sw" style="background:${SPORT_COLOR};opacity:.35"></i>Sport</span>
       <span><i class="sw" style="background:${SLEEP_COLOR};opacity:.3"></i>Sleep</span></div>`;
   }
@@ -250,12 +252,12 @@ class DaybookApp extends HTMLElement {
     const drafts = day.filter((e) => e.status === "draft");
 
     const inBody = this._isToday()
-      ? profilesInUse(s).map((pid) => {
+      ? substanceIds(s).map((pid) => {
           const d = doses(this._entries, s, pid);
           if (!d.length) return "";
           const level = levelAt(d, now, s, this._profiles, pid);
           if (level < s.negligible_share) return "";
-          const unit = s.items.find((i) => i.profile === pid)?.unit || "";
+          const unit = unitOf(s, pid);
           const amount = amountAt(d, now, s, this._profiles, pid);
           return `<span><i class="sw line" style="background:${substanceColor(s, pid)}"></i>${esc(this._label(pid))} ≈ ${Math.round(amount)} ${esc(unit)}</span>`;
         }).join("")
@@ -284,8 +286,8 @@ class DaybookApp extends HTMLElement {
             ${s.states.map((st) => `<button class="chip state" style="--c:${st.color}" data-action="quick:state:${st.id}"><span class="dot"></span>${esc(st.name)}</button>`).join("")}
           </div></div>
           <div class="group"><div class="glabel">Took</div><div class="chips">
-            ${s.items.map((it) => `<button class="chip" data-action="quick:intake:${it.id}"><span class="dot" style="background:${substanceColor(s, it.profile)}"></span>${esc(it.name)}${it.amount != null ? ` <span class="sub">${round1(it.amount)} ${esc(it.unit)}</span>` : ""}</button>`).join("")}
-            ${s.items.length ? "" : `<span class="muted">Add coffee, meds and more in <a href="#" data-action="tab:settings">Settings</a>.</span>`}
+            ${allItems(s).map((it) => `<button class="chip" data-action="quick:intake:${it.id}"><span class="dot" style="background:${substanceColor(s, it.substance)}"></span>${esc(it.name)}${it.amount != null ? ` <span class="sub">${round1(it.amount)} ${esc(it.unit)}</span>` : ""}</button>`).join("")}
+            ${allItems(s).length ? "" : `<span class="muted">Add coffee, meds and more in <a href="#" data-action="tab:settings">Settings</a>.</span>`}
           </div>${tookToday ? `<div class="muted small took">So far: ${tookToday}</div>` : ""}</div>
           <div class="group"><div class="glabel">Other</div><div class="chips">
             <button class="chip" data-action="new:sport">Sport</button>
@@ -336,7 +338,7 @@ class DaybookApp extends HTMLElement {
     const narrow = this._narrow;
     const days = [];
     for (let i = this._weekDays - 1; i >= 0; i--) days.push(this._shiftDay(this._dayStart, -i));
-    const inUse = profilesInUse(s);
+    const inUse = substanceIds(s);
     if (this._weekAlign !== "clock" && !inUse.includes(this._weekAlign)) this._weekAlign = "clock";
     const W = narrow ? 420 : 680, L = narrow ? 46 : 64, w = W - L - 4, RH = this._weekDays > 7 ? 46 : 62, TOP = 24;
     const height = TOP + days.length * RH + 6;
@@ -422,7 +424,7 @@ class DaybookApp extends HTMLElement {
 
     const comps = stackedBars(r.comparisons.map((c) => ({ label: c.name, counts: c.counts })), s, { minN });
 
-    const substanceCards = profilesInUse(s).map((pid) => {
+    const substanceCards = substanceIds(s).map((pid) => {
       const ww = r.with_without[pid];
       const sf = r.since_first[pid];
       const label = this._label(pid);
@@ -475,10 +477,10 @@ class DaybookApp extends HTMLElement {
     }
 
     // Sleep, in plain words.
-    const sp = r.sleep_profile;
-    const spNoun = this._noun(sp);
+    const sp = r.sleep_substance;
+    const spNoun = sp ? this._noun(sp) : "caffeine";
     const [prof, hl, tm] = profileParams(s, this._profiles, sp);
-    const unit = s.items.find((i) => i.profile === sp)?.unit || "";
+    const unit = unitOf(s, sp);
     const split = r.sleep_split;
     let sleepRows = "";
     if (split) {
@@ -511,62 +513,69 @@ class DaybookApp extends HTMLElement {
   }
 
   // -- Substances view ------------------------------------------------
+  /** Which curves the Substances tab shows, remembered on this device. */
+  _substPrefs() {
+    if (!this._substShown) {
+      try { this._substShown = JSON.parse(localStorage.getItem("daybook.substances") || "null"); } catch { this._substShown = null; }
+      if (!this._substShown?.hidden || !this._substShown?.extra) this._substShown = { hidden: [], extra: [] };
+    }
+    return this._substShown;
+  }
+
+  _toggleSubst(key, on) {
+    const prefs = this._substPrefs();
+    const [list, id] = key.startsWith("ref:") ? ["extra", key.slice(4)] : ["hidden", key];
+    const add = list === "extra" ? on : !on;
+    prefs[list] = add ? [...new Set([...prefs[list], id])] : prefs[list].filter((x) => x !== id);
+    try { localStorage.setItem("daybook.substances", JSON.stringify(prefs)); } catch { /* private mode */ }
+    this._render();
+  }
+
   _renderSubstances() {
     const s = this._settings;
-    const ids = Object.keys(this._profiles).filter((id) => id !== "custom");
-    if (!this._shownSubstances) {
-      const mine = profilesInUse(s).filter((p) => p !== "custom");
-      this._shownSubstances = [...new Set(["caffeine", ...mine])];
-      if (this._shownSubstances.length < 3) this._shownSubstances.push(...["mph_ir", "lisdexamfetamine"].filter((x) => !this._shownSubstances.includes(x)));
-    }
-    const colors = {};
-    ids.forEach((id, i) => (colors[id] = s.substances[id]?.color || PALETTE[i % PALETTE.length]));
+    const prefs = this._substPrefs();
     const neg = s.negligible_share;
-    const shown = this._shownSubstances.filter((id) => this._profiles[id]);
-    const chartEntries = shown.map((id) => {
-      const [profile, hl, tm] = profileParams(s, this._profiles, id);
-      return { profile, color: colors[id], hl, tm };
+    // Yours first (with your colours and overrides), then the profiles you don't use.
+    const mine = s.substances.map((sub) => {
+      const [profile, hl, tm] = profileParams(s, this._profiles, sub.id);
+      return { key: sub.id, name: sub.name, profile, hl, tm, color: sub.color, on: !prefs.hidden.includes(sub.id), own: true };
     });
-    const rows = ids.map((id) => {
-      const [p, hl, tm] = profileParams(s, this._profiles, id);
-      const half = hoursUntilBelow(p, 0.5, hl, tm);
-      const gone = hoursUntilBelow(p, neg, hl, tm);
-      const custom = hl || tm ? ' <span class="badge">Your settings</span>' : "";
-      return `<label class="subst ${shown.includes(id) ? "on" : ""}">
-        <input type="checkbox" data-field="subst:${id}" ${shown.includes(id) ? "checked" : ""}>
-        <i class="sw line" style="background:${colors[id]}"></i>
-        <span><b>${esc(p.name)}</b> <span class="muted">${esc(p.examples)}</span>${custom}${p.verified ? "" : ' <span class="badge">Estimate</span>'}
-        <span class="facts">Peaks after ${fmtHours(tm || p.tmax_h)} · half-life ${round1(hl || p.half_life_h)} h${p.half_life_range_h ? ` (people vary: ${p.half_life_range_h[0]}–${p.half_life_range_h[1]} h)` : ""}</span>
+    const used = new Set(s.substances.map((sub) => sub.profile));
+    const others = Object.entries(this._profiles)
+      .filter(([id]) => id !== "custom" && !used.has(id))
+      .map(([id, p], i) => ({ key: `ref:${id}`, name: p.name, profile: p, color: PALETTE[i % PALETTE.length], on: prefs.extra.includes(id), own: false }));
+    const shown = [...mine, ...others].filter((c) => c.on);
+    const card = (c) => {
+      const p = c.profile;
+      const half = hoursUntilBelow(p, 0.5, c.hl, c.tm);
+      const gone = hoursUntilBelow(p, neg, c.hl, c.tm);
+      const what = c.own && c.name !== p.name ? p.name : p.examples;
+      const badges = `${c.hl || c.tm ? ' <span class="badge">Your settings</span>' : ""}${p.verified ? "" : ' <span class="badge">Estimate</span>'}`;
+      return `<label class="subst ${c.on ? "on" : ""}">
+        <input type="checkbox" data-field="subst:${esc(c.key)}" ${c.on ? "checked" : ""}>
+        <i class="sw line" style="background:${c.color}"></i>
+        <span><b>${esc(c.name)}</b> <span class="muted">${esc(what || "")}</span>${badges}
+        <span class="facts">Peaks after ${fmtHours(c.tm || p.tmax_h)} · half-life ${round1(c.hl || p.half_life_h)} h${p.half_life_range_h ? ` (people vary: ${p.half_life_range_h[0]}–${p.half_life_range_h[1]} h)` : ""}</span>
         <span class="facts">${half ? `Half gone after ${fmtHours(half)}` : ""}${gone ? ` · effectively gone after ${fmtHours(gone)}` : ""}</span>
         ${p.notes ? `<span class="facts">${esc(p.notes)}</span>` : ""}
         ${p.sources.length ? `<span class="facts">${p.sources.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noreferrer">Source ${i + 1}</a>`).join(" · ")}</span>` : ""}</span></label>`;
-    }).join("");
+    };
     return `
       <div class="daynav"><h2>How long things stay in your body</h2></div>
       <section class="card wide">
         <div class="sub2">One dose of each, as a share of its own peak. The dot marks when it drops below ${Math.round(neg * 100)}% of its peak, which Daybook treats as gone. Your body clears the rest slowly, so the faint tail is real but small. Dashed lines are rougher estimates.</div>
-        <div class="legend">${shown.map((id) => `<span><i class="sw line" style="background:${colors[id]}"></i>${esc(this._profiles[id].name)}</span>`).join("")}</div>
-        <svg viewBox="0 0 900 260" class="chart">${substanceChart(chartEntries, { negligible: neg })}</svg>
+        <div class="legend">${shown.map((c) => `<span><i class="sw line" style="background:${c.color}"></i>${esc(c.name)}</span>`).join("")}</div>
+        <svg viewBox="0 0 900 260" class="chart">${substanceChart(shown, { negligible: neg })}</svg>
         <p class="disclaimer">${esc(this._disclaimer)}</p>
       </section>
-      <div class="substs">${rows}</div>`;
+      ${mine.length ? `<h3 class="section">Yours</h3><div class="substs">${mine.map(card).join("")}</div>` : ""}
+      <h3 class="section">Others, for comparison</h3><div class="substs">${others.map(card).join("")}</div>`;
   }
 
   // -- Settings view --------------------------------------------------
-  _ensureSubstances() {
-    const d = this._draft;
-    profilesInUse(d).forEach((pid, i) => {
-      if (!d.substances[pid]) {
-        const firstItem = d.items.find((it) => it.profile === pid);
-        d.substances[pid] = { color: PALETTE[(Object.keys(d.substances).length + i) % PALETTE.length], label: pid === "caffeine" ? "" : firstItem?.name || "", half_life_h: null, tmax_h: null };
-      }
-    });
-  }
-
   _renderSettings() {
     const d = this._draft;
     if (!d) return "";
-    this._ensureSubstances();
     const ents = this._ha.entities || {};
     const of = (domain) => Object.keys(ents).filter((e) => e.startsWith(`${domain}.`));
     const zones = of("zone"), persons = [...of("person"), ...of("device_tracker")], schedules = of("schedule");
@@ -574,9 +583,8 @@ class DaybookApp extends HTMLElement {
     const opt = (v, cur, label = v) => `<option value="${esc(v)}" ${String(v) === String(cur) ? "selected" : ""}>${label}</option>`;
     const num = (path, v, attrs = "") => `<input type="number" data-path="${path}" data-type="number" value="${v ?? ""}" ${attrs}>`;
     const txt = (path, v, attrs = "") => `<input type="text" data-path="${path}" value="${esc(v ?? "")}" ${attrs}>`;
-    const inUse = profilesInUse(d);
     const profileOpts = (cur) => Object.entries(this._profiles).map(([id, p]) => opt(id, cur, `${esc(p.name)}${p.examples && id !== "custom" ? ` (${esc(p.examples)})` : ""}`)).join("");
-    const usedOpts = (cur) => inUse.map((pid) => opt(pid, cur, esc(d.substances[pid]?.label || this._profiles[pid]?.name || pid))).join("");
+    const subOpts = (cur) => d.substances.map((sub) => opt(sub.id, cur, esc(sub.name))).join("");
 
     const states = d.states.map((st, i) => `<div class="row">
         <input type="color" data-path="states.${i}.color" value="${st.color}" aria-label="Colour">
@@ -584,22 +592,33 @@ class DaybookApp extends HTMLElement {
         <select data-path="states.${i}.energy" aria-label="Energy">${opt("high", st.energy, "High energy")}${opt("low", st.energy, "Low energy")}${opt("neutral", st.energy, "Neutral")}</select>
         <button class="icon ghost" data-action="remove:states:${i}" aria-label="Remove">×</button></div>`).join("");
 
-    const items = d.items.map((it, i) => `<div class="block"><div class="row">
-        ${txt(`items.${i}.name`, it.name, 'aria-label="Name" placeholder="Coffee"')}
-        <span class="unit">${num(`items.${i}.amount`, it.amount, 'min="0" step="any" aria-label="Usual amount" placeholder="Amount"')}${txt(`items.${i}.unit`, it.unit, 'class="short" aria-label="Unit"')}</span>
-        <button class="icon ghost" data-action="remove:items:${i}" aria-label="Remove">×</button></div>
-        <div class="row"><label>Substance <select data-path="items.${i}.profile">${profileOpts(it.profile)}</select></label></div></div>`).join("");
-
-    const substances = inUse.map((pid) => {
-      const sub = d.substances[pid];
-      const p = this._profiles[pid];
-      return `<div class="block"><div class="row">
-          <input type="color" data-path="substances.${pid}.color" value="${sub.color}" aria-label="Colour">
-          ${txt(`substances.${pid}.label`, sub.label, `aria-label="Name in charts" placeholder="${esc(p.name)}"`)}</div>
-        <div class="row"><span class="muted">${esc(p.name)}</span></div>
-        <div class="row"><label>Half-life ${num(`substances.${pid}.half_life_h`, sub.half_life_h, `step="0.1" placeholder="${p.half_life_h}"`)} h</label>
-          <label>Time to peak ${num(`substances.${pid}.tmax_h`, sub.tmax_h, `step="0.1" placeholder="${p.tmax_h}"`)} h</label></div>
-        <label class="check"><input type="checkbox" data-action="sensor:${pid}" ${d.ha_sensors.includes(pid) ? "checked" : ""}> Show how much is in your body as a Home Assistant sensor</label></div>`;
+    const takes = d.substances.map((sub, i) => {
+      const p = this._profiles[sub.profile] || this._profiles.custom;
+      const open = this._openSubs.has(sub);
+      const summary = [
+        sub.name !== p.name && sub.profile !== "custom" ? esc(p.name) : "",
+        `half-life ${round1(sub.half_life_h || p.half_life_h)} h`,
+        sub.ha_sensor ? "HA sensor" : "",
+      ].filter(Boolean).join(" · ");
+      const others = d.substances.filter((_, k) => k !== i);
+      const items = sub.items.map((it, j) => `<div class="row item">
+          ${txt(`substances.${i}.items.${j}.name`, it.name, 'aria-label="Name" placeholder="Coffee"')}
+          <span class="unit">${num(`substances.${i}.items.${j}.amount`, it.amount, 'min="0" step="any" aria-label="Usual amount" placeholder="Amount"')}${txt(`substances.${i}.items.${j}.unit`, it.unit, 'class="short" aria-label="Unit"')}</span>
+          ${others.length ? `<select class="move" data-move="${i}:${j}" aria-label="Move to another substance"><option value="" selected>Move to…</option>${others.map((o) => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join("")}</select>` : ""}
+          <button class="icon ghost" data-action="rmitem:${i}:${j}" aria-label="Remove ${esc(it.name)}">×</button></div>`).join("");
+      return `<div class="subgroup">
+        <div class="row subhead">
+          <input type="color" data-path="substances.${i}.color" value="${sub.color}" aria-label="Colour">
+          ${txt(`substances.${i}.name`, sub.name, 'aria-label="Substance name" class="subname"')}
+          <button class="ghost subsum" data-action="subopen:${i}" aria-expanded="${open}">${open ? "Hide details" : summary} ${open ? "▴" : "▾"}</button></div>
+        ${open ? `<div class="subdetails">
+          <div class="row"><label>Profile <select data-path="substances.${i}.profile">${profileOpts(sub.profile)}</select></label></div>
+          <div class="row"><label>Half-life ${num(`substances.${i}.half_life_h`, sub.half_life_h, `step="0.1" placeholder="${p.half_life_h}"`)} h</label>
+            <label>Time to peak ${num(`substances.${i}.tmax_h`, sub.tmax_h, `step="0.1" placeholder="${p.tmax_h}"`)} h</label></div>
+          <div class="row"><label class="check"><input type="checkbox" data-path="substances.${i}.ha_sensor" data-type="bool" ${sub.ha_sensor ? "checked" : ""}> Show how much is in your body as a Home Assistant sensor</label></div>
+          <div class="row"><button class="ghost danger" data-action="remove:substances:${i}">Remove ${esc(sub.name)} and what's in it</button></div></div>` : ""}
+        ${items}
+        <div class="row item"><button class="ghost" data-action="additem:${i}">Add to ${esc(sub.name)}</button></div></div>`;
     }).join("");
 
     const comparisons = d.comparisons.map((c, i) => `<div class="block">
@@ -607,7 +626,7 @@ class DaybookApp extends HTMLElement {
           <button class="icon ghost" data-action="remove:comparisons:${i}" aria-label="Remove line">×</button></div>
         ${c.conditions.map((cond, j) => `<div class="row cond"><span class="muted lead">${j ? "and" : "Had"}</span>
           <select data-path="comparisons.${i}.conditions.${j}.present" data-type="boolsel" aria-label="Had or not">${opt("true", cond.present, "some")}${opt("false", cond.present, "no")}</select>
-          <select data-path="comparisons.${i}.conditions.${j}.profile" aria-label="Substance">${usedOpts(cond.profile)}</select>
+          <select data-path="comparisons.${i}.conditions.${j}.substance" aria-label="Substance">${subOpts(cond.substance)}</select>
           ${num(`comparisons.${i}.conditions.${j}.from_h`, cond.from_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="From hours before"')}<span class="muted">–</span>${num(`comparisons.${i}.conditions.${j}.to_h`, cond.to_h, 'min="0" max="48" step="0.5" class="tiny" aria-label="To hours before"')}<span class="muted">h before</span>
           <button class="icon ghost" data-action="rmcond:${i}:${j}" aria-label="Remove condition">×</button></div>`).join("")}
         <div class="row"><button class="ghost" data-action="addcond:${i}">Add condition</button>${c.conditions.length ? "" : '<span class="muted">No conditions: counts every check-in</span>'}</div></div>`).join("");
@@ -638,10 +657,9 @@ class DaybookApp extends HTMLElement {
       <div class="grid">
         <section class="card"><h3>How you feel</h3><div class="sub2">The buttons you press to check in. High and low energy are used for the energy chart.</div>
           ${states}<button class="ghost" data-action="add:states">Add state</button></section>
-        <section class="card"><h3>What you take</h3><div class="sub2">Coffee, tea, meds, anything. Pick the substance so Daybook can draw how long it stays in your body.</div>
-          ${items}<button class="ghost" data-action="add:items">Add</button></section>
-        <section class="card"><h3>Substances</h3><div class="sub2">How each substance is shown. Leave half-life and time to peak empty to use published averages.</div>
-          ${substances || '<p class="muted">Add something you take first.</p>'}
+        <section class="card"><h3>What you take</h3><div class="sub2">Coffee, tea, meds, anything, grouped by the substance in it so Daybook can draw how long it stays in your body. Open a substance to change its profile, half-life or time to peak.</div>
+          ${takes || '<p class="muted">Nothing yet.</p>'}
+          <div class="row"><button class="ghost" data-action="add:substances">Add substance</button></div>
           <div class="row"><label>Treat as gone below ${num("negligible_share", Math.round(d.negligible_share * 100), 'min="1" max="50" data-scale="100"')} % of one usual dose's peak</label></div></section>
         <section class="card" id="comparisons"><h3>Comparison lines</h3><div class="sub2">The lines in "How you felt, depending on what you'd had" on the Patterns tab. Each condition looks at a window before every check-in, for example "had some caffeine 1–4 h before".</div>
           ${comparisons}<button class="ghost" data-action="add:comparisons">Add line</button></section>
@@ -654,7 +672,7 @@ class DaybookApp extends HTMLElement {
           <div class="row"><label>Timeline from ${num("axis_start_hour", d.axis_start_hour, 'min="0" max="12"')} :00</label>
             <label>to ${num("axis_end_hour", d.axis_end_hour, 'min="16" max="32"')} :00</label><span class="muted">26 = 02:00</span></div>
           <div class="row"><label>Hide patterns until there are ${num("min_samples", d.min_samples, 'min="1" max="100"')} check-ins</label></div>
-          <div class="row"><label>Sleep chart uses <select data-path="sleep_profile">${usedOpts(d.sleep_profile)}</select></label></div></section>
+          <div class="row"><label>Sleep chart uses <select data-path="sleep_substance">${subOpts(d.sleep_substance)}</select></label></div></section>
         <section class="card"><h3>Home Assistant</h3>
           <div class="row">${status(this._ha.connected, this._ha.connected ? "Connected to Home Assistant" : "Not connected to Home Assistant")}
             ${status(this._ha.mqtt, this._ha.mqtt ? "Connected to MQTT" : "MQTT not connected")}</div>
@@ -674,13 +692,26 @@ class DaybookApp extends HTMLElement {
     let value = raw;
     if (type === "number") value = raw === "" ? null : Number(raw) / (scale || 1);
     if (type === "boolsel") value = raw === "true";
+    // Picking a profile renames a substance that still has a generic name.
+    if (parts[0] === "substances" && key === "profile" && value !== "custom") {
+      const oldName = this._profiles[obj.profile]?.name;
+      if (obj.name === oldName || obj.name === "New substance") {
+        obj.name = this._profiles[value].name;
+        if (obj._new) obj.id = this._uniqueId(this._pool(parts), slug(obj.name), obj);
+      }
+    }
     obj[key] = value;
     // A new entry gets its id from its name; existing ids never change.
-    if (key === "name" && obj._new) obj.id = this._uniqueId(parts[0], slug(value), obj);
+    if (key === "name" && obj._new) obj.id = this._uniqueId(this._pool(parts), slug(value), obj);
   }
 
-  _uniqueId(list, base, self) {
-    const taken = new Set(this._draft[list].filter((x) => x !== self).map((x) => x.id));
+  /** The list whose ids must stay unique: item ids are unique across all substances. */
+  _pool(parts) {
+    return parts.includes("items") ? this._draft.substances.flatMap((x) => x.items) : this._draft[parts[0]];
+  }
+
+  _uniqueId(pool, base, self) {
+    const taken = new Set(pool.filter((x) => x !== self).map((x) => x.id));
     let id = base, n = 2;
     while (taken.has(id)) id = `${base}_${n++}`;
     return id;
@@ -688,16 +719,14 @@ class DaybookApp extends HTMLElement {
 
   async _saveSettings() {
     const payload = clone(this._draft);
-    for (const list of ["states", "items", "comparisons", "sport_zones"]) payload[list].forEach((x) => delete x._new);
-    const used = new Set(profilesInUse(payload));
-    for (const pid of Object.keys(payload.substances)) if (!used.has(pid)) delete payload.substances[pid];
-    payload.ha_sensors = payload.ha_sensors.filter((p) => used.has(p));
+    for (const list of ["states", "substances", "comparisons", "sport_zones"]) payload[list].forEach((x) => delete x._new);
+    for (const sub of payload.substances) sub.items.forEach((x) => delete x._new);
     try {
       const res = await this._ws({ type: "daybook/settings/set", settings: payload });
       this._settings = res.settings;
       this._draft = clone(res.settings);
       this._settingsError = null;
-      this._shownSubstances = null;
+      this._openSubs = new WeakSet();
       this._showToast("Settings saved");
     } catch (err) {
       this._settingsError = err.message || String(err);
@@ -725,8 +754,9 @@ class DaybookApp extends HTMLElement {
     let item = "";
     if (e.kind === "state") item = `<label>How you felt<select id="d-item">${opts(s.states, e.item)}</select></label>`;
     if (e.kind === "intake") {
-      const it = s.items.find((x) => x.id === e.item);
-      item = `<label>What<select id="d-item">${opts(s.items, e.item)}</select></label>
+      const it = allItems(s).find((x) => x.id === e.item);
+      const grouped = s.substances.map((sub) => `<optgroup label="${esc(sub.name)}">${opts(sub.items, e.item)}</optgroup>`).join("");
+      item = `<label>What<select id="d-item">${grouped}</select></label>
         <label>Amount<span class="unit"><input id="d-amount" type="number" min="0" step="any" value="${e.value?.amount ?? it?.amount ?? ""}"> ${esc(e.value?.unit || it?.unit || "")}</span></label>`;
     }
     if (e.kind === "sport") item = `<label>Activity<input id="d-item" list="d-acts" value="${esc(e.item || "")}"><datalist id="d-acts">${activities.map((a) => `<option value="${esc(a)}">`).join("")}</datalist></label>`;
@@ -754,7 +784,7 @@ class DaybookApp extends HTMLElement {
       const raw = $("#d-amount").value;
       if (raw === "") delete value.amount;
       else value.amount = Number(raw);
-      const item = s => s.items.find((x) => x.id === $("#d-item").value);
+      const item = (s) => allItems(s).find((x) => x.id === $("#d-item").value);
       value.unit = item(this._settings)?.unit || value.unit || "";
     }
     const msg = { start: fromInput($("#d-start").value), note: $("#d-note").value, value };
@@ -852,7 +882,10 @@ class DaybookApp extends HTMLElement {
   async _import(file) {
     try {
       const parsed = JSON.parse(await file.text());
-      this._draft = { ...clone(this._settings), ...parsed };
+      // Files from older versions are converted by the app.
+      const res = await this._ws({ type: "daybook/settings/normalize", settings: { ...clone(this._settings), ...parsed } });
+      this._draft = res.settings;
+      this._openSubs = new WeakSet();
       this._settingsError = null;
       this._showToast("Settings loaded. Check them, then save.");
     } catch (err) {
@@ -864,6 +897,13 @@ class DaybookApp extends HTMLElement {
   // -- Events ---------------------------------------------------------
   _onField(ev, live = false) {
     const t = ev.target;
+    if (t.dataset.move && this._draft && !live && t.value) {
+      const [i, j] = t.dataset.move.split(":").map(Number);
+      const [item] = this._draft.substances[i].items.splice(j, 1);
+      this._draft.substances.find((x) => x.id === t.value).items.push(item);
+      this._render();
+      return;
+    }
     if (t.dataset.path && this._draft) {
       const v = t.dataset.type === "bool" ? t.checked : t.value;
       this._setPath(t.dataset.path, v, t.dataset.type, Number(t.dataset.scale) || 1);
@@ -874,11 +914,7 @@ class DaybookApp extends HTMLElement {
     const f = t.dataset.field;
     if (!f) return;
     if (f === "align") { this._weekAlign = t.value; this._render(); }
-    if (f.startsWith("subst:")) {
-      const id = f.slice(6);
-      this._shownSubstances = t.checked ? [...this._shownSubstances, id] : this._shownSubstances.filter((x) => x !== id);
-      this._render();
-    }
+    if (f.startsWith("subst:")) this._toggleSubst(f.slice(6), t.checked);
     if (f === "import" && t.files[0]) this._import(t.files[0]);
   }
 
@@ -938,17 +974,29 @@ class DaybookApp extends HTMLElement {
       restore: () => this._ws({ type: "daybook/entries/restore", entry_id: a }).then(() => { this._showToast("Restored"); this._load(); }).catch(fail),
       toast: () => this._toastAction(a),
       settings: () => { if (a === "save") this._saveSettings(); else { this._draft = clone(this._settings); this._settingsError = null; this._render(); } },
-      sensor: () => {
-        const list = this._draft.ha_sensors;
-        this._draft.ha_sensors = list.includes(a) ? list.filter((x) => x !== a) : [...list, a];
+      subopen: () => {
+        const sub = this._draft.substances[Number(a)];
+        if (this._openSubs.has(sub)) this._openSubs.delete(sub); else this._openSubs.add(sub);
+        this._render();
       },
+      additem: () => {
+        const sub = this._draft.substances[Number(a)];
+        const item = { name: "New", amount: null, unit: sub.items[0]?.unit || "mg", _new: true };
+        item.id = this._uniqueId(this._pool(["substances", "0", "items"]), "new", item);
+        sub.items.push(item);
+        this._render();
+      },
+      rmitem: () => { this._draft.substances[Number(a)].items.splice(Number(b), 1); this._render(); },
       add: () => {
         const d = this._draft;
-        const firstProfile = profilesInUse(d)[0] || "caffeine";
+        const firstSub = d.substances[0]?.id || "";
         const fresh = {
           states: { name: "New state", color: PALETTE[d.states.length % PALETTE.length], energy: "high" },
-          items: { name: "New", profile: "custom", amount: null, unit: "mg" },
-          comparisons: { name: "New line", conditions: [{ profile: firstProfile, present: true, from_h: 0, to_h: 4 }] },
+          substances: {
+            name: "New substance", profile: "custom", color: PALETTE[d.substances.length % PALETTE.length],
+            half_life_h: null, tmax_h: null, ha_sensor: false, items: [],
+          },
+          comparisons: { name: "New line", conditions: firstSub ? [{ substance: firstSub, present: true, from_h: 0, to_h: 4 }] : [] },
           sport_zones: {
             activity: "Sport",
             zone: Object.keys(this._ha.entities || {}).find((e) => e.startsWith("zone.") && e !== "zone.home") || "zone.home",
@@ -957,13 +1005,14 @@ class DaybookApp extends HTMLElement {
           },
         }[a];
         const item = { ...fresh, _new: true };
-        item.id = this._uniqueId(a, slug(item.name || item.activity), item);
+        item.id = this._uniqueId(d[a], slug(item.name || item.activity), item);
         d[a].push(item);
+        if (a === "substances") this._openSubs.add(item);
         this._render();
       },
       remove: () => { this._draft[a].splice(Number(b), 1); this._render(); },
       addcond: () => {
-        this._draft.comparisons[Number(a)].conditions.push({ profile: profilesInUse(this._draft)[0] || "caffeine", present: true, from_h: 0, to_h: 4 });
+        this._draft.comparisons[Number(a)].conditions.push({ substance: this._draft.substances[0]?.id || "", present: true, from_h: 0, to_h: 4 });
         this._render();
       },
       rmcond: () => { this._draft.comparisons[Number(a)].conditions.splice(Number(b), 1); this._render(); },
@@ -994,8 +1043,10 @@ const STYLE = `
 nav { display:flex; gap:2px; overflow-x:auto; }
 .tab { background:none; border:none; color:inherit; padding:8px 12px; border-radius:18px; font:inherit; font-size:14px; cursor:pointer; color:var(--muted); }
 .tab.active { background:var(--chip); color:var(--text); }
-main { max-width:1240px; margin:0 auto; padding:var(--gap); }
-.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap:var(--gap); align-items:start; }
+main { max-width:1840px; margin:0 auto; padding:var(--gap); }
+/* Masonry: cards flow into as many columns as fit, each column packed to the top. */
+.grid { columns:auto 480px; column-gap:var(--gap); }
+.grid > .card { break-inside:avoid; margin:0 0 var(--gap); width:100%; display:inline-block; }
 .card { background:var(--card); border-radius:14px; border:1px solid var(--line); padding:16px 18px; box-sizing:border-box; min-width:0; }
 .card.wide, .card.error { margin-bottom:var(--gap); }
 .card.error { color:var(--danger); }
@@ -1068,6 +1119,14 @@ svg .onbar { fill:#fff; font-size:11px; }
 .status.ok i { background:#1baf7a; }
 .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
 .block { border-top:1px solid var(--line); padding:8px 0; }
+.subgroup { border:1px solid var(--line); border-radius:10px; padding:4px 10px; margin:0 0 10px; }
+.subhead input.subname { font-weight:500; }
+.subsum { font-size:13px; color:var(--muted); border:none; padding:6px 8px; }
+.subdetails { border-top:1px solid var(--line); padding:4px 0 4px 44px; }
+.row.item { padding-left:44px; margin:4px 0; }
+.row.item input[type=text] { min-width:100px; }
+select.move { font-size:13px; color:var(--muted); max-width:140px; }
+h3.section { margin:18px 0 10px; }
 input, select, textarea { font:inherit; font-size:14px; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; box-sizing:border-box; }
 input[type=text] { flex:1; min-width:120px; }
 input[type=number] { width:76px; }
@@ -1100,6 +1159,7 @@ label.check { margin-top:6px; }
   main { padding:12px; --gap:12px; }
   .tab { padding:8px; }
   .sleeprow { grid-template-columns:1fr; gap:4px; }
+  .row.item, .subdetails { padding-left:0; }
 }
 `;
 

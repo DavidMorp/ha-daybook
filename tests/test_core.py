@@ -95,13 +95,48 @@ def settings():
     })
 
 
-def test_settings_validation_adds_substance_display_settings():
-    s = settings()
-    assert set(s["substances"]) == {"caffeine", "lisdexamfetamine"}
+def test_settings_from_before_0_3_are_converted():
+    old = {
+        "items": [
+            {"id": "coffee", "name": "Coffee", "profile": "caffeine", "amount": 90, "unit": "mg"},
+            {"id": "espresso", "name": "Espresso", "profile": "caffeine", "amount": 65, "unit": "mg"},
+            {"id": "elvanse", "name": "Elvanse", "profile": "lisdexamfetamine", "amount": 30, "unit": "mg"},
+        ],
+        "substances": {
+            "caffeine": {"color": "#eda100", "label": "", "half_life_h": 4.5, "tmax_h": None},
+            "lisdexamfetamine": {"color": "#d4537e", "label": "Elvanse"},
+        },
+        "ha_sensors": ["lisdexamfetamine"],
+        "comparisons": [{"id": "x", "name": "X", "conditions": [
+            {"profile": "caffeine", "present": True, "from_h": 1, "to_h": 4}]}],
+        "sleep_profile": "lisdexamfetamine",
+    }
+    s = validate(old)
+    caf, elv = s["substances"]
+    assert (caf["id"], caf["name"], caf["half_life_h"], caf["ha_sensor"]) == ("caffeine", "Caffeine", 4.5, False)
+    assert [i["id"] for i in caf["items"]] == ["coffee", "espresso"] and "profile" not in caf["items"][0]
+    assert (elv["id"], elv["name"], elv["profile"], elv["ha_sensor"]) == ("lisdexamfetamine", "Elvanse", "lisdexamfetamine", True)
+    assert s["comparisons"][0]["conditions"][0]["substance"] == "caffeine"
+    assert s["sleep_substance"] == "lisdexamfetamine"
+    assert "items" not in s and "ha_sensors" not in s
+    assert validate(s) == s  # converting twice changes nothing
+
+
+def test_two_custom_substances_and_validation():
+    s = validate({"substances": [
+        {"id": "nicotine", "name": "Nicotine", "items": [{"id": "snus", "name": "Snus"}]},
+        {"id": "theanine", "name": "L-theanine", "items": [{"id": "pill", "name": "Pill", "amount": 200}]},
+    ], "comparisons": []})
+    assert [x["profile"] for x in s["substances"]] == ["custom", "custom"]
+    assert s["sleep_substance"] == "nicotine"  # caffeine is gone, so the first one
+    item = {"id": "a", "name": "A"}
+    with pytest.raises(Exception):  # item ids are unique across substances
+        validate({"substances": [{"id": "x", "name": "X", "items": [item]}, {"id": "y", "name": "Y", "items": [item]}]})
+    with pytest.raises(Exception):  # a line must use a substance in the list
+        validate({"substances": [{"id": "x", "name": "X"}], "comparisons": [
+            {"id": "c", "name": "C", "conditions": [{"substance": "gone", "present": True, "from_h": 0, "to_h": 1}]}]})
     with pytest.raises(Exception):
-        validate({"items": [{"id": "a", "name": "A", "profile": "nope"}]})
-    with pytest.raises(Exception):
-        validate({"items": [{"id": "a", "name": "A", "profile": "caffeine"}] * 2})
+        validate({"substances": [{"id": "x", "name": "X", "profile": "nope"}]})
 
 
 def e(kind, item, t, **value):

@@ -74,52 +74,71 @@ export function hoursUntilBelow(profile, share, halfLifeH, tmaxH) {
   return null;
 }
 
-export function profileParams(settings, profiles, profileId) {
-  const profile = profiles[profileId] || profiles.custom;
-  const o = settings.substances?.[profileId] || {};
-  return [profile, o.half_life_h || undefined, o.tmax_h || undefined];
+// Substances are the ones in settings, by id. Each has a profile, optional
+// overrides, and the items you take that contain it.
+export function findSubstance(settings, id) {
+  return settings.substances.find((s) => s.id === id);
 }
 
-export function profilesInUse(settings) {
-  return [...new Set(settings.items.map((i) => i.profile))];
+export function substanceIds(settings) {
+  return settings.substances.map((s) => s.id);
 }
 
-export function referenceAmount(settings, profileId) {
-  return settings.items.find((i) => i.profile === profileId && i.amount)?.amount || 1;
+/** Every item, with its substance id under `substance`. */
+export function allItems(settings) {
+  return settings.substances.flatMap((s) => s.items.map((it) => ({ ...it, substance: s.id })));
 }
 
-export function substanceLabel(settings, profiles, profileId) {
-  return settings.substances?.[profileId]?.label || profiles[profileId]?.name || profileId;
+export function itemSubstance(settings, itemId) {
+  return settings.substances.find((s) => s.items.some((it) => it.id === itemId));
 }
 
-export function substanceColor(settings, profileId) {
-  return settings.substances?.[profileId]?.color || "#d4537e";
+export function profileParams(settings, profiles, id) {
+  const sub = findSubstance(settings, id) || {};
+  const profile = profiles[sub.profile] || profiles.custom;
+  return [profile, sub.half_life_h || undefined, sub.tmax_h || undefined];
+}
+
+export function referenceAmount(settings, id) {
+  return findSubstance(settings, id)?.items.find((i) => i.amount)?.amount || 1;
+}
+
+export function unitOf(settings, id) {
+  return findSubstance(settings, id)?.items[0]?.unit || "";
+}
+
+export function substanceLabel(settings, profiles, id) {
+  return findSubstance(settings, id)?.name || id;
+}
+
+export function substanceColor(settings, id) {
+  return findSubstance(settings, id)?.color || "#d4537e";
 }
 
 /** [timestamp, amount] of confirmed intakes of one substance. */
-export function doses(entries, settings, profileId) {
-  const items = Object.fromEntries(settings.items.map((i) => [i.id, i]));
+export function doses(entries, settings, id) {
+  const items = Object.fromEntries((findSubstance(settings, id)?.items || []).map((i) => [i.id, i]));
   const out = [];
   for (const e of entries) {
     if (e.kind !== "intake" || e.status !== "confirmed" || e.deleted) continue;
     const item = items[e.item];
-    if (!item || item.profile !== profileId) continue;
+    if (!item) continue;
     const amount = typeof e.value?.amount === "number" ? e.value.amount : item.amount || 1;
     out.push([e.start, amount]);
   }
   return out;
 }
 
-export function amountAt(doseList, ts, settings, profiles, profileId) {
-  const [p, hl, tm] = profileParams(settings, profiles, profileId);
+export function amountAt(doseList, ts, settings, profiles, id) {
+  const [p, hl, tm] = profileParams(settings, profiles, id);
   let total = 0;
   for (const [t0, a] of doseList) total += a * amountFraction((ts - t0) / HOUR, p, hl, tm);
   return total;
 }
 
 /** 1.0 = the peak of one usual dose. */
-export function levelAt(doseList, ts, settings, profiles, profileId) {
-  const [p, hl, tm] = profileParams(settings, profiles, profileId);
-  const peak = singleDosePeak(p, hl, tm) * referenceAmount(settings, profileId);
-  return peak > 0 ? amountAt(doseList, ts, settings, profiles, profileId) / peak : 0;
+export function levelAt(doseList, ts, settings, profiles, id) {
+  const [p, hl, tm] = profileParams(settings, profiles, id);
+  const peak = singleDosePeak(p, hl, tm) * referenceAmount(settings, id);
+  return peak > 0 ? amountAt(doseList, ts, settings, profiles, id) / peak : 0;
 }

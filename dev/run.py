@@ -36,25 +36,25 @@ class FakeHA:
 
 
 SETTINGS = {
-    "items": [
-        {"id": "coffee", "name": "Coffee", "profile": "caffeine", "amount": 90, "unit": "mg"},
-        {"id": "espresso", "name": "Espresso", "profile": "caffeine", "amount": 65, "unit": "mg"},
-        {"id": "elvanse", "name": "Elvanse", "profile": "lisdexamfetamine", "amount": 30, "unit": "mg"},
+    "substances": [
+        {"id": "caffeine", "name": "Caffeine", "profile": "caffeine", "color": "#eda100", "ha_sensor": True,
+         "items": [
+             {"id": "coffee", "name": "Coffee", "amount": 90, "unit": "mg"},
+             {"id": "espresso", "name": "Espresso", "amount": 65, "unit": "mg"},
+         ]},
+        {"id": "elvanse", "name": "Elvanse", "profile": "lisdexamfetamine", "color": "#d4537e",
+         "items": [{"id": "elvanse_30", "name": "Elvanse 30", "amount": 30, "unit": "mg"}]},
     ],
-    "substances": {
-        "caffeine": {"color": "#eda100"},
-        "lisdexamfetamine": {"color": "#d4537e", "label": "Elvanse"},
-    },
     "comparisons": [
         {"id": "elvanse_coffee", "name": "Elvanse today, coffee 1–4 h ago",
-         "conditions": [{"profile": "lisdexamfetamine", "present": True, "from_h": 0, "to_h": 12},
-                        {"profile": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
+         "conditions": [{"substance": "elvanse", "present": True, "from_h": 0, "to_h": 12},
+                        {"substance": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
         {"id": "elvanse_only", "name": "Elvanse today, no coffee in 4 h",
-         "conditions": [{"profile": "lisdexamfetamine", "present": True, "from_h": 0, "to_h": 12},
-                        {"profile": "caffeine", "present": False, "from_h": 0, "to_h": 4}]},
+         "conditions": [{"substance": "elvanse", "present": True, "from_h": 0, "to_h": 12},
+                        {"substance": "caffeine", "present": False, "from_h": 0, "to_h": 4}]},
         {"id": "coffee_only", "name": "Coffee 1–4 h ago, no Elvanse",
-         "conditions": [{"profile": "lisdexamfetamine", "present": False, "from_h": 0, "to_h": 12},
-                        {"profile": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
+         "conditions": [{"substance": "elvanse", "present": False, "from_h": 0, "to_h": 12},
+                        {"substance": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
     ],
     "sport_zones": [
         {"id": "pool", "zone": "zone.pool", "person": "person.alex", "activity": "Water polo", "min_minutes": 60,
@@ -83,7 +83,7 @@ async def seed(j: Journal) -> None:
         wake = 7.4 + rnd.random() * 0.8 + (1.4 if wd >= 5 else 0)
         took = wd < 5 and rnd.random() > 0.15
         if took:
-            await add({"kind": "intake", "item": "elvanse", "start": at(wake + 0.3), "source": "button"})
+            await add({"kind": "intake", "item": "elvanse_30", "start": at(wake + 0.3), "source": "button"})
         coffees = [wake + 0.5, 13 + rnd.random()] + ([15.5 + rnd.random()] if rnd.random() > 0.5 else [])
         for c in coffees:
             await add({"kind": "intake", "item": rnd.choice(["coffee", "coffee", "espresso"]), "start": at(c), "source": "box"})

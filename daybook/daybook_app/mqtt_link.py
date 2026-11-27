@@ -25,7 +25,7 @@ import paho.mqtt.client as mqtt
 
 from .const import KIND_INTAKE, KIND_STATE, KINDS
 from .core import JournalError
-from .substances import PROFILES
+from .model import unit_of
 
 if TYPE_CHECKING:
     from .core import Journal
@@ -164,21 +164,22 @@ class MqttLink:
                 "command_topic": f"{PREFIX}/press/{KIND_STATE}/{st['id']}", "icon": "mdi:emoticon-outline",
                 "device": device, **avail,
             }
-        for it in s["items"]:
-            uid = f"daybook_took_{it['id']}"
-            out[f"{DISCOVERY}/button/daybook/{uid}/config"] = {
-                "name": f"Took {it['name'].lower()}", "unique_id": uid, "object_id": uid,
-                "command_topic": f"{PREFIX}/press/{KIND_INTAKE}/{it['id']}",
-                "icon": "mdi:coffee-outline" if it["profile"] == "caffeine" else "mdi:pill",
-                "device": device, **avail,
-            }
-        for profile_id in s["ha_sensors"]:
-            uid = f"daybook_level_{profile_id}"
-            label = (s["substances"].get(profile_id) or {}).get("label") or PROFILES[profile_id]["name"]
-            unit = next((i.get("unit") for i in s["items"] if i["profile"] == profile_id), "mg") or "mg"
+        for sub in s["substances"]:
+            for it in sub["items"]:
+                uid = f"daybook_took_{it['id']}"
+                out[f"{DISCOVERY}/button/daybook/{uid}/config"] = {
+                    "name": f"Took {it['name'].lower()}", "unique_id": uid, "object_id": uid,
+                    "command_topic": f"{PREFIX}/press/{KIND_INTAKE}/{it['id']}",
+                    "icon": "mdi:coffee-outline" if sub["profile"] == "caffeine" else "mdi:pill",
+                    "device": device, **avail,
+                }
+        for sub in s["substances"]:
+            if not sub.get("ha_sensor"):
+                continue
+            uid = f"daybook_level_{sub['id']}"
             out[f"{DISCOVERY}/sensor/daybook/{uid}/config"] = {
-                "name": f"{label} in body", "unique_id": uid, "object_id": uid,
-                "state_topic": f"{PREFIX}/level/{profile_id}", "unit_of_measurement": unit,
+                "name": f"{sub['name']} in body", "unique_id": uid, "object_id": uid,
+                "state_topic": f"{PREFIX}/level/{sub['id']}", "unit_of_measurement": unit_of(s, sub["id"]),
                 "state_class": "measurement", "suggested_display_precision": 0,
                 "icon": "mdi:chart-bell-curve-cumulative", "device": device, **avail,
             }
@@ -199,6 +200,7 @@ class MqttLink:
     async def publish_levels(self) -> None:
         if not self.connected:
             return
-        for profile_id in self.journal.settings["ha_sensors"]:
-            now = await self.journal.level_now(profile_id)
-            self._client.publish(f"{PREFIX}/level/{profile_id}", f"{now['amount']:.1f}", retain=True)
+        for sub in self.journal.settings["substances"]:
+            if sub.get("ha_sensor"):
+                now = await self.journal.level_now(sub["id"])
+                self._client.publish(f"{PREFIX}/level/{sub['id']}", f"{now['amount']:.1f}", retain=True)

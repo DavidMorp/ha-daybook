@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from . import insights
 from .const import KIND_INTAKE, KIND_STATE
 from .model import doses, amount_at, level_at
-from .settings import merge_defaults, validate
+from .settings import all_items, merge_defaults, validate
 from .store import DaybookStore, StoreError
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,6 +45,9 @@ class Journal:
         await asyncio.to_thread(self.store.open)
         stored = await asyncio.to_thread(self.store.kv_get, SETTINGS_KEY)
         self.settings = validate(stored) if stored else validate({})
+        if stored and stored != self.settings:
+            # Saves settings converted from an older version, once.
+            await asyncio.to_thread(self.store.kv_set, SETTINGS_KEY, self.settings)
 
     async def stop(self) -> None:
         await asyncio.to_thread(self.store.close)
@@ -75,7 +78,7 @@ class Journal:
         return settings
 
     def item(self, item_id: str | None) -> dict[str, Any] | None:
-        return next((i for i in self.settings["items"] if i["id"] == item_id), None)
+        return next((i for i in all_items(self.settings) if i["id"] == item_id), None)
 
     # -- entries --------------------------------------------------------
     def _prepare(self, entry: dict[str, Any]) -> dict[str, Any]:
@@ -149,13 +152,13 @@ class Journal:
         return await asyncio.to_thread(self.store.history, entry_id)
 
     # -- derived --------------------------------------------------------
-    async def level_now(self, profile_id: str) -> dict[str, float]:
+    async def level_now(self, substance_id: str) -> dict[str, float]:
         now = time.time()
         entries = await self.list(now - 4 * 86400, now, kinds=[KIND_INTAKE])
-        d = doses(entries, self.settings, profile_id)
+        d = doses(entries, self.settings, substance_id)
         return {
-            "amount": amount_at(d, now, self.settings, profile_id),
-            "level": level_at(d, now, self.settings, profile_id),
+            "amount": amount_at(d, now, self.settings, substance_id),
+            "level": level_at(d, now, self.settings, substance_id),
         }
 
     async def insights(self, days: int) -> dict[str, Any]:

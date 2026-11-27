@@ -8,7 +8,7 @@ Daybook was built for tracking ADHD medication and caffeine, but it works for an
 - **Everything is editable.** Change the time, amount or note of any entry, delete it, or restore it. Every change keeps the previous version.
 - **Records what happened, nothing more.** No schedules, reminders or "missed" doses.
 - **Your own states.** Instead of a 1–5 score you check in with states such as productive, creative, overstimulated, tired or lazy, each marked high or low energy.
-- **What you take, as substances.** Coffee, tea and meds are all things you take. Each is linked to a substance profile (caffeine, methylphenidate, lisdexamfetamine…), so the timeline shows roughly how much was in your body, and when it was effectively gone.
+- **What you take, as substances.** Coffee, tea and meds are all things you take, grouped by the substance in them. Each substance starts from a profile (caffeine, methylphenidate, lisdexamfetamine…), so the timeline shows roughly how much was in your body, and when it was effectively gone.
 - **Compare days.** The week view puts days side by side, lined up by time of day or by your first coffee or dose.
 - **Patterns without AI.** Counts and shares only: your typical week, how you felt depending on what you'd had (lines you define yourself), by hours since your first intake, days with compared with days without, energy through the day, and sleep after more or less caffeine than usual. Nothing is shown until there's enough data.
 - **Sport from zones.** Stays in an HA zone during your training times (or an HA Schedule) become suggested sport entries you confirm in the panel or from a phone notification.

@@ -1,7 +1,7 @@
 // SVG renderers shared by the views.
 import {
-  HOUR, doses, levelAt, profilesInUse, substanceColor, substanceLabel, amountFraction,
-  singleDosePeak, hoursUntilBelow,
+  HOUR, doses, levelAt, substanceIds, substanceColor, substanceLabel, amountFraction,
+  singleDosePeak, hoursUntilBelow, allItems, itemSubstance,
 } from "./pk.js";
 
 export const SPORT_COLOR = "#0ca30c";
@@ -29,7 +29,7 @@ export function fmtHours(h) {
 
 export function itemName(settings, kind, item) {
   if (kind === "state") return settings.states.find((s) => s.id === item)?.name || item;
-  if (kind === "intake") return settings.items.find((s) => s.id === item)?.name || item;
+  if (kind === "intake") return allItems(settings).find((s) => s.id === item)?.name || item;
   if (kind === "sleep") return "Sleep";
   if (kind === "note") return "Note";
   return item || kind;
@@ -40,8 +40,8 @@ export function stateColor(settings, id) {
 }
 
 export function intakeColor(settings, itemId) {
-  const item = settings.items.find((i) => i.id === itemId);
-  return item ? substanceColor(settings, item.profile) : "#888780";
+  const sub = itemSubstance(settings, itemId);
+  return sub ? sub.color : "#888780";
 }
 
 const LEVEL_SCALE = 1.4; // relative level at full curve height
@@ -84,7 +84,7 @@ export function timelineRow({ entries, tFrom, tTo, x0, w, y, h, settings, profil
   const steps = 160;
   const series = [];
   let maxLevel = 0;
-  for (const pid of profilesInUse(settings)) {
+  for (const pid of substanceIds(settings)) {
     const d = doses(live, settings, pid);
     if (!d.length) continue;
     const values = [];
@@ -191,7 +191,8 @@ export function substanceChart(entries, { width = 900, height = 260, hours = 24,
   o += `<rect x="${x0}" y="${y(negligible)}" width="${w}" height="${h - (y(negligible) - y0)}" fill="var(--line)" opacity=".35"/>`;
   o += `<text x="${x0 + w - 4}" y="${y(negligible) - 4}" text-anchor="end" class="tick">Below ${Math.round(negligible * 100)}%: effectively gone</text>`;
   for (let t = 0; t <= hours; t += 3) o += `<text x="${x(t)}" y="${y0 + h + 18}" text-anchor="middle" class="tick">${t} h</text>`;
-  for (const { profile, color, hl, tm } of entries) {
+  for (const { profile, color, hl, tm, name } of entries) {
+    const label = name || profile.name;
     const peak = singleDosePeak(profile, hl, tm);
     const solid = [], faint = [];
     for (let i = 0; i <= 288; i++) {
@@ -204,10 +205,10 @@ export function substanceChart(entries, { width = 900, height = 260, hours = 24,
     }
     if (faint.length && solid.length) faint.unshift(solid[solid.length - 1]);
     const dash = profile.verified ? "" : ' stroke-dasharray="6 4"';
-    o += `<path d="M${solid.join(" L")}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"${dash}><title>${esc(profile.name)}</title></path>`;
+    o += `<path d="M${solid.join(" L")}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"${dash}><title>${esc(label)}</title></path>`;
     if (faint.length > 1) o += `<path d="M${faint.join(" L")}" fill="none" stroke="${color}" stroke-width="1.4" opacity=".35" stroke-dasharray="2 4"/>`;
     const gone = hoursUntilBelow(profile, negligible, hl, tm);
-    if (gone && gone <= hours) o += `<circle cx="${x(gone)}" cy="${y(negligible)}" r="4" fill="${color}"><title>${esc(profile.name)}: effectively gone after ${fmtHours(gone)}</title></circle>`;
+    if (gone && gone <= hours) o += `<circle cx="${x(gone)}" cy="${y(negligible)}" r="4" fill="${color}"><title>${esc(label)}: effectively gone after ${fmtHours(gone)}</title></circle>`;
   }
   return o;
 }

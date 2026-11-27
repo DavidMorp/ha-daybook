@@ -32,8 +32,6 @@ DEFAULT_SETTINGS: Final[dict] = {
     # in the charts. Elimination never quite reaches zero.
     "negligible_share": 0.1,
     "notify_service": "",
-    # Substances whose level is published to Home Assistant as a sensor.
-    "ha_sensors": ["caffeine"],
     "states": [
         {"id": "productive", "name": "Productive", "color": "#1baf7a", "energy": ENERGY_HIGH},
         {"id": "creative", "name": "Creative", "color": "#6250d6", "energy": ENERGY_HIGH},
@@ -41,23 +39,25 @@ DEFAULT_SETTINGS: Final[dict] = {
         {"id": "tired", "name": "Tired", "color": "#2a78d6", "energy": ENERGY_LOW},
         {"id": "lazy", "name": "Lazy", "color": "#9a9890", "energy": ENERGY_LOW},
     ],
-    # Things you take. Each points to a substance profile in substances.py.
-    "items": [
-        {"id": "coffee", "name": "Coffee", "profile": "caffeine", "amount": 90, "unit": "mg"},
-        {"id": "espresso", "name": "Espresso", "profile": "caffeine", "amount": 65, "unit": "mg"},
-        {"id": "black_tea", "name": "Black tea", "profile": "caffeine", "amount": 45, "unit": "mg"},
+    # What you take, grouped by substance. Each substance starts from a
+    # profile in substances.py; half-life and time to peak can be overridden.
+    # Item ids are unique across all substances (buttons and entries use them).
+    "substances": [
+        {"id": "caffeine", "name": "Caffeine", "profile": "caffeine", "color": "#eda100",
+         "half_life_h": None, "tmax_h": None, "ha_sensor": True,
+         "items": [
+             {"id": "coffee", "name": "Coffee", "amount": 90, "unit": "mg"},
+             {"id": "espresso", "name": "Espresso", "amount": 65, "unit": "mg"},
+             {"id": "black_tea", "name": "Black tea", "amount": 45, "unit": "mg"},
+         ]},
     ],
-    # Per-substance colour and optional overrides of the published averages.
-    "substances": {
-        "caffeine": {"color": "#eda100", "half_life_h": None, "tmax_h": None},
-    },
     # Lines of the "How you felt, depending on what you'd had" chart.
     "comparisons": [
         {"id": "after_caffeine", "name": "1–4 h after caffeine",
-         "conditions": [{"profile": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
+         "conditions": [{"substance": "caffeine", "present": True, "from_h": 1, "to_h": 4}]},
         {"id": "no_caffeine", "name": "No caffeine in the last 4 h",
-         "conditions": [{"profile": "caffeine", "present": False, "from_h": 0, "to_h": 4}]},
+         "conditions": [{"substance": "caffeine", "present": False, "from_h": 0, "to_h": 4}]},
     ],
-    "sleep_profile": "caffeine",
+    "sleep_substance": "caffeine",
     "sport_zones": [],
 }

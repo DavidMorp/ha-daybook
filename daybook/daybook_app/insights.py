@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 from .const import KIND_INTAKE, KIND_SLEEP, KIND_STATE, STATUS_CONFIRMED
-from .model import doses, level_at, profiles_in_use
+from .model import doses, level_at, substance_ids
 
 BANDS = ((6, 10), (10, 14), (14, 18), (18, 22), (22, 30))
 BAND_LABELS = ("6–10", "10–14", "14–18", "18–22", "22+")
@@ -51,7 +51,7 @@ def matches(conditions: list[dict[str, Any]], ts: float, intake_times: dict[str,
     """True when every condition holds for a check-in at ts."""
     for c in conditions:
         lo, hi = ts - c["to_h"] * 3600, ts - c["from_h"] * 3600
-        found = any(lo <= t <= hi for t in intake_times.get(c["profile"], []))
+        found = any(lo <= t <= hi for t in intake_times.get(c["substance"], []))
         if found != c["present"]:
             return False
     return True
@@ -60,7 +60,7 @@ def matches(conditions: list[dict[str, Any]], ts: float, intake_times: dict[str,
 def compute(entries: list[dict[str, Any]], settings: dict[str, Any], tz: tzinfo) -> dict[str, Any]:
     dsh = int(settings.get("day_start_hour", 4))
     high = {s["id"] for s in settings.get("states", []) if s.get("energy") == "high"}
-    profiles = profiles_in_use(settings)
+    profiles = substance_ids(settings)
 
     states = _confirmed(entries, KIND_STATE)
     sleeps = _confirmed(entries, KIND_SLEEP)
@@ -128,7 +128,7 @@ def compute(entries: list[dict[str, Any]], settings: dict[str, Any], tz: tzinfo)
 
     # 6. Sleep length on nights with less or more of a substance left at
     # bedtime than your usual (the median), so the split adapts to your habits.
-    sp = settings.get("sleep_profile", "caffeine")
+    sp = settings.get("sleep_substance", "")
     sp_doses = doses(entries, settings, sp)
     nights = [
         (level_at(sp_doses, sl["start"], settings, sp), (sl["end"] - sl["start"]) / 3600)
@@ -158,7 +158,7 @@ def compute(entries: list[dict[str, Any]], settings: dict[str, Any], tz: tzinfo)
         "since_first": since_first,
         "with_without": with_without,
         "energy_by_hour": energy_by_hour,
-        "sleep_profile": sp,
+        "sleep_substance": sp,
         "sleep_split": sleep_split,
         "n_nights": len(nights),
     }

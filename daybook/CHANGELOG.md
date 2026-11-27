@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- What you take is grouped by substance in one Settings card: each substance (Caffeine, Elvanse…) holds the things you take that contain it. You can now have more than one custom substance.
+- Settings from 0.2.0 are converted automatically when the app starts, and when you import an older settings file. Button entities, sensors and your entries keep their ids.
+- Cards fill the page in columns instead of leaving gaps, and use more of wide screens.
+- The Substances tab shows your own substances, with your colours and settings, and remembers which curves you turned on or off.
+
 ## 0.2.0
 
 - Daybook is now a Home Assistant app with its own panel, instead of an integration.
