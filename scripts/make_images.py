@@ -1,4 +1,4 @@
-"""Draws the app's icon.png and logo.png (run from the repo root).
+"""Draws the app's logo.png (run from the repo root). icon.png is kept as drawn in 0.2.0.
 
 Drawn at 8x and scaled down, so lines are smooth. Two curves like the
 timeline (a fast one and a slow one) above a lane of check-in marks.
@@ -57,7 +57,6 @@ def draw(size, radius, plot, lane_y, mark_h, line_w, mark_w):
 
 def main() -> None:
     out = Path("daybook")
-    draw((128, 128), 26, (22, 22, 106, 84), 96, 12, 5, 6).save(out / "icon.png")
     draw((250, 100), 18, (22, 16, 228, 66), 76, 10, 5, 7).save(out / "logo.png")
 
 
